@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "23";
+	return "24";
 }
 
 an_on_connect()
@@ -724,7 +724,12 @@ an_on_bot_kill( bot, weapon, headshot )
 	self endon( "disconnect" );
 	m = int( distance( self.origin, bot.origin ) * 0.0254 );
 	an_log( "bot killed by " + self.name + " " + weapon + " " + m + "m" );
-	self thread an_xp_popup_check( headshot );
+	// stock Long Shot medal rule (_medals.gsc:283-291): farther than the weapon's distance
+	longshot = false;
+	far = maps\mp\_medals::get_distance_for_weapon( weapon );
+	if ( far > 0 && distanceSquared( bot.origin, self.origin ) > far * far )
+		longshot = true;
+	self thread an_xp_popup_check( headshot, longshot );
 	if ( self.pers["an_afh"] == "stance" )
 		self thread an_afterhit_prone( false );
 	else if ( self.pers["an_afh"] == "instant" )
@@ -757,13 +762,13 @@ an_afterhit_prone( instant )
 // (_rank.gsc:406 needs a player on both teams). If the kill gave no XP, give it again
 // through giveRankXP's own devAdd argument, which skips that team check only.
 // Every player's team / class / state is logged to find why one isn't counted.
-an_xp_popup_check( headshot )
+an_xp_popup_check( headshot, longshot )
 {
 	self endon( "disconnect" );
 	waittillframeend;
 	wait 0.05;
 	given = ( isDefined( self.rankUpdateTotal ) && self.rankUpdateTotal > 0 ) || ( isDefined( self.hud_rankscroreupdate ) && self.hud_rankscroreupdate.alpha > 0 );
-	line = "xp popup " + self.name + " given " + an_bool( given ) + " headshot " + an_bool( headshot );
+	line = "xp popup " + self.name + " given " + an_bool( given ) + " headshot " + an_bool( headshot ) + " longshot " + an_bool( longshot );
 	line = line + " count " + level.playerCount["allies"] + "/" + level.playerCount["axis"] + " state " + game["state"];
 	for ( i = 0; i < level.players.size; i++ )
 	{
@@ -779,6 +784,14 @@ an_xp_popup_check( headshot )
 	self thread maps\mp\gametypes\_rank::giveRankXP( "kill", undefined, true );
 	if ( headshot )
 		self thread maps\mp\gametypes\_rank::giveRankXP( "headshot", undefined, true );
+	// Long Shot medal: 50 XP (medaltable.csv row 2), "+550" with the kill
+	if ( longshot )
+	{
+		xp = 50;
+		if ( isDefined( level.medalInfo ) && isDefined( level.medalInfo["MEDAL_LONG_SHOT"] ) )
+			xp = level.medalInfo["MEDAL_LONG_SHOT"]["xp"].team;
+		self thread maps\mp\gametypes\_rank::giveRankXP( "medal", xp, true );
+	}
 }
 
 // ---------------------------------------------------------------- almost hits
@@ -1004,7 +1017,7 @@ an_menu_hold_player( on )
 		self setActionSlot( 1, " " );
 		return;
 	}
-	self setMoveSpeedScale( 1 );
+	self an_speed_apply();
 	if ( isDefined( self.an_menu_equipment ) && self hasWeapon( self.an_menu_equipment ) )
 		self setActionSlot( 1, "weapon", self.an_menu_equipment );
 	self.an_menu_equipment = undefined;
@@ -1727,16 +1740,71 @@ an_bounce_boost_loop()
 	}
 }
 
+// ---------------------------------------------------------------- pistol move speed
+
+// Every gun moves at pistol speed (Ankh 2026-10-13). Engine: speed = base * the held
+// weapon's moveSpeedScale (adsMoveSpeedScale while aiming) * the script multiplier
+// (bg_pmove.cpp PM_CmdScale). Pistols are 1.0 (weapon files, OAT dump); the others
+// get 1 / their value. Aiming down sights gets the same multiplier.
+an_weapon_move_scale( weapon )
+{
+	base = strTok( weapon, "_" )[0];
+	switch ( base )
+	{
+		case "ak47": case "aug": case "commando": case "enfield": case "famas": case "fnfal":
+		case "g11": case "galil": case "m14": case "m16":
+		case "dragunov": case "l96a1": case "psg1": case "wa2000":
+			return 0.95;
+		case "hk21": case "m60": case "rpk": case "stoner63":
+			return 0.875;
+		case "china": case "m72": case "rpg": case "strela":
+			return 0.8;
+	}
+	return 1;
+}
+
+an_speed_apply()
+{
+	if ( isDefined( self.an_menu_open ) && self.an_menu_open )
+		return;
+	weapon = self getCurrentWeapon();
+	scale = 1;
+	if ( isDefined( weapon ) && weapon != "none" && weapon != "" )
+		scale = 1 / an_weapon_move_scale( weapon );
+	self setMoveSpeedScale( scale );
+}
+
+an_speed_watch()
+{
+	self endon( "disconnect" );
+	self endon( "death" );
+	self notify( "an_speed_watch" );
+	self endon( "an_speed_watch" );
+	// No jump fatigue on the player's own game too: the server sets jump_slowdownEnable 0,
+	// but the game predicts landings with its own copy (SUSPECTED it keeps 1).
+	self setClientDvar( "jump_slowdownEnable", "0" );
+	self an_speed_apply();
+	for ( ;; )
+	{
+		self waittill( "weapon_change" );
+		self an_speed_apply();
+	}
+}
+
 // Perk toggles (per player, saved with the personal settings). ON gives the perk
 // to every class, OFF takes it away even when the class has it. Specialty lists
 // from the stock perk table (statstable.csv rows 161, 163, 167).
 //   ps : Sleight of Hand Pro, default ON
 //   pc : Scout Pro, default OFF
 //   pa : Steady Aim Pro, default ON
+//   pl : Lightweight Pro, default ON (row 151: movefaster|fallheight)
+// Always on for humans: Marathon Pro's unlimited sprint. player_sprintUnlimited 1 is
+// set on the server, but the player's game predicts sprint with its own copy; the
+// perk bit travels in the player state (bg_pmove.cpp: perks[1] & 0x80000 = unlimited).
 
 an_perk_keys()
 {
-	return strTok( "ps pc pa", " " );
+	return strTok( "ps pc pa pl", " " );
 }
 
 an_perk_specialties( key )
@@ -1746,6 +1814,7 @@ an_perk_specialties( key )
 		case "ps": return strTok( "specialty_fastreload specialty_fastads", " " );
 		case "pc": return strTok( "specialty_holdbreath specialty_fastweaponswitch", " " );
 		case "pa": return strTok( "specialty_bulletaccuracy specialty_sprintrecovery specialty_fastmeleerecovery", " " );
+		case "pl": return strTok( "specialty_movefaster specialty_fallheight", " " );
 	}
 	return [];
 }
@@ -1757,6 +1826,7 @@ an_perk_name( key )
 		case "ps": return "Sleight of Hand Pro";
 		case "pc": return "Scout Pro";
 		case "pa": return "Steady Aim Pro";
+		case "pl": return "Lightweight Pro";
 	}
 	return key;
 }
@@ -1769,6 +1839,8 @@ an_perks_defaults()
 		self.pers["an_pc"] = "0";
 	if ( !isDefined( self.pers["an_pa"] ) )
 		self.pers["an_pa"] = "1";
+	if ( !isDefined( self.pers["an_pl"] ) )
+		self.pers["an_pl"] = "1";
 }
 
 // After every spawn and class change (stock giveLoadout clears perks first).
@@ -1776,6 +1848,8 @@ an_perks_apply()
 {
 	if ( !isAlive( self ) )
 		return;
+	self setPerk( "specialty_longersprint" );
+	self setPerk( "specialty_unlimitedsprint" );
 	keys = an_perk_keys();
 	for ( k = 0; k < keys.size; k++ )
 	{
@@ -2234,6 +2308,7 @@ an_class_change_watch()
 		self maps\mp\gametypes\_class::giveLoadout( self.pers["team"], self.pers["class"] );
 		self maps\mp\gametypes\_hardpoints::giveOwnedKillstreak();
 		self an_perks_apply();
+		self an_speed_apply();
 		self thread an_record_weapon_options();
 		an_log( "class change " + self.name + " " + self.pers["class"] );
 	}
@@ -2334,7 +2409,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh ah sb ps pc pa", " " );
+	return strTok( "is ac ob nc fc afh ah sb ps pc pa pl", " " );
 }
 
 an_player_file()
@@ -2397,6 +2472,7 @@ an_valid_setting( key, v )
 		case "ps":
 		case "pc":
 		case "pa":
+		case "pl":
 			return v == "0" || v == "1";
 		case "sb": return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	}
@@ -2818,6 +2894,7 @@ an_weapons_spawned()
 {
 	self an_plugin_sync();
 	self an_perks_apply();
+	self thread an_speed_watch();
 	self thread an_weapon_watch();
 	self thread an_ammo_loop();
 	self thread an_record_weapon_options();

@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "11";
+	return "12";
 }
 
 an_on_connect()
@@ -91,7 +91,8 @@ an_server_dvars()
 {
 	wait 0.05;
 	an_try_set( "sv_enableBounces", "1" );
-	names = strTok( "sv_enableBounces sv_allAnglesBounces sv_terrainEdgeBounces sv_enableDoubleTaps g_playerCollision g_playerEjection jump_slowdownEnable player_sprintUnlimited bg_fallDamageMinHeight bg_ladder_yawcap bg_prone_yawcap player_useRadius penetrationCount perk_bulletPenetrationMultiplier bulletrange sv_cheats scr_allowFileIo", " " );
+	an_log( "plugin: weapons " + getdvar( "an_weaponsPatched" ) + ", wallbang " + getdvar( "bg_surfacePenetrationPatched" ) + " (bg_surfacePenetration " + getdvar( "bg_surfacePenetration" ) + ")" );
+	names = strTok( "bulletrange sv_enableBounces sv_allAnglesBounces sv_terrainEdgeBounces sv_enableDoubleTaps g_playerCollision g_playerEjection jump_slowdownEnable player_sprintUnlimited bg_fallDamageMinHeight bg_ladder_yawcap bg_prone_yawcap player_useRadius penetrationCount perk_bulletPenetrationMultiplier bulletrange sv_cheats scr_allowFileIo", " " );
 	line = "dvars";
 	for ( i = 0; i < names.size; i++ )
 		line = line + " " + names[i] + "=[" + getdvar( names[i] ) + "]";
@@ -1432,6 +1433,9 @@ an_movement_init()
 	setdvar( "player_sprintUnlimited", "1" );
 	setdvar( "bg_fallDamageMinHeight", "9998" );
 	setdvar( "bg_fallDamageMaxHeight", "9999" );
+	// Wallbang everything comes from the server plugin (bg_surfacePenetration);
+	// the range is the dvar's maximum (registered max 65536 in t5mp.exe).
+	setdvar( "bulletrange", "65536" );
 	an_movement_apply();
 
 	level thread an_barrier_init();

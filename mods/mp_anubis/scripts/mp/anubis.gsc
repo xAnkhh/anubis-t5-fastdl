@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "46";
+	return "47";
 }
 
 an_on_connect()
@@ -1689,6 +1689,51 @@ an_movement_init()
 	level thread an_barrier_init();
 	level thread an_bounce_boost_loop();
 	level thread an_ladder_fix_loop();
+	level thread an_zip_loop();
+}
+
+// Kowloon ziplines with the gun out. Stock mp_kowloon.gsc zipline_player_func gives
+// and switches to "zipline_mp", waits for "weapon_raising", then links the player to
+// the line and at the end switches back to the saved weapon and takes zipline_mp.
+// We let that first "weapon_raising" through (so the stock ride never hangs), then
+// switch straight back to the player's gun for the ride. Kill switch: set an_zip_guns 0.
+an_zip_loop()
+{
+	level endon( "game_ended" );
+	if ( getdvar( "mapname" ) != "mp_kowloon" )
+		return;
+	an_log( "zipline guns " + an_bool( getdvar( "an_zip_guns" ) != "0" ) );
+	for ( ;; )
+	{
+		for ( i = 0; i < level.players.size; i++ )
+		{
+			player = level.players[i];
+			if ( !isAlive( player ) || player an_is_bot() )
+				continue;
+			w = player getCurrentWeapon();
+			if ( w != "zipline_mp" && w != "none" )
+				player.an_zip_last = w;
+			if ( getdvar( "an_zip_guns" ) != "0" && !isDefined( player.an_zip_busy ) && player hasWeapon( "zipline_mp" ) )
+				player thread an_zip_ride();
+		}
+		wait 0.05;
+	}
+}
+
+an_zip_ride()
+{
+	self endon( "disconnect" );
+	self.an_zip_busy = true;
+	self waittill_any_timeout_an( 2, "weapon_raising" );
+	waittillframeend;
+	if ( isAlive( self ) && isDefined( self.an_zip_last ) && self hasWeapon( self.an_zip_last ) )
+	{
+		self switchToWeapon( self.an_zip_last );
+		an_log( "zipline with " + self.an_zip_last + " for " + self.name );
+	}
+	while ( isAlive( self ) && self hasWeapon( "zipline_mp" ) )
+		wait 0.05;
+	self.an_zip_busy = undefined;
 }
 
 // Ladders: with g_playerCollision "nobody" players still overlap, and the ladder

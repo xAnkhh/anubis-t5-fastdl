@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "18";
+	return "20";
 }
 
 an_on_connect()
@@ -410,6 +410,7 @@ an_bot_connected()
 	self thread an_bot_hold();
 	self thread an_bot_late_spawn();
 	self thread an_bot_death_watch();
+	self thread an_bot_kill_watch();
 	for ( ;; )
 	{
 		self waittill( "spawned_player" );
@@ -577,20 +578,33 @@ an_bot_death_watch()
 		self.an_life_armed = false;
 		self.pers["lives"] = 0;
 		an_log( "bot died, lives " + self.pers["lives"] );
+	}
+}
+
+// Stock Callback_PlayerKilled sends "killed_player" after its own postgame check, so
+// the kill is always processed (and its final killcam recorded) before the round ends.
+an_bot_kill_watch()
+{
+	self endon( "disconnect" );
+	for ( ;; )
+	{
+		self waittill( "killed_player" );
 		if ( isDefined( self.pers["team"] ) && ( self.pers["team"] == "allies" || self.pers["team"] == "axis" ) )
 			level thread an_bot_death_round_check( self.pers["team"] );
 	}
 }
 
 // Build 17 log: the bot (the only defender) died at 316100 and the round kept going
-// (the auto plant fired 1.1 s later), so no killcam. If stock hasn't ended the round
-// half a second after the bot's team is wiped, the dead event is sent here: same
-// stock path (sd onDeadEvent -> last killcam + round end). The counters are logged
-// to find out why stock didn't.
+// (the auto plant fired 1.1 s later), so no killcam. The kill ends the round at once
+// (Ankh): at the end of the death frame, if the bot's team has nobody alive, the dead
+// event is sent here: same stock path (sd onDeadEvent -> round end). Stock
+// Callback_PlayerKilled then sees game["state"] != "playing" ~2 s after the death and
+// records/plays the final killcam of this kill (_globallogic_player.gsc:2038). The
+// counters are logged to find out why stock didn't.
 an_bot_death_round_check( team )
 {
 	level endon( "game_ended" );
-	wait 0.5;
+	waittillframeend;
 	if ( level.gameEnded || game["state"] != "playing" )
 		return;
 	for ( i = 0; i < level.players.size; i++ )
@@ -599,7 +613,7 @@ an_bot_death_round_check( team )
 		if ( isAlive( p ) && isDefined( p.pers["team"] ) && p.pers["team"] == team )
 			return;
 	}
-	an_log( "bot team " + team + " wiped, round still on: alive " + level.aliveCount[ team ] + " lives " + level.playerLives[ team ] + " existed " + an_bool( level.everExisted[ team ] ) + " grace " + an_bool( level.inGracePeriod ) + " numLives " + level.numLives + " -> dead event" );
+	an_log( "bot team " + team + " wiped, round still on: alive " + level.aliveCount[ team ] + " lives " + level.playerLives[ team ] + " existed " + an_bool( level.everExisted[ team ] ) + " grace " + an_bool( level.inGracePeriod ) + " numLives " + level.numLives + " -> round ends now" );
 	[[ level.onDeadEvent ]]( team );
 }
 

@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "15";
+	return "17";
 }
 
 an_on_connect()
@@ -620,6 +620,8 @@ an_player_damage( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapo
 		an_log( "bot hit by " + eAttacker.name + " " + sWeapon + " " + sMeansOfDeath );
 		if ( an_is_killer( eAttacker, eInflictor, sWeapon, sMeansOfDeath ) )
 		{
+			// a killing hit must kill, not down the bot into last stand
+			self an_bot_no_last_stand();
 			iDamage = self.health + 1000;
 			eAttacker thread an_on_bot_kill( self, sWeapon );
 		}
@@ -768,6 +770,18 @@ an_bot_pistol()
 	self takeAllWeapons();
 	self giveWeapon( "m1911_mp" );
 	self switchToWeapon( "m1911_mp" );
+	self an_bot_no_last_stand();
+}
+
+// Second Chance (Pro = specialty_finalstand) put the bot into last stand on the
+// killing shot, so it never died and the round never ended with the killcam
+// (Ankh, build 15).
+an_bot_no_last_stand()
+{
+	if ( self hasPerk( "specialty_pistoldeath" ) )
+		self unsetPerk( "specialty_pistoldeath" );
+	if ( self hasPerk( "specialty_finalstand" ) )
+		self unsetPerk( "specialty_finalstand" );
 }
 
 an_afterhit_cycle()
@@ -1794,10 +1808,19 @@ an_file_write( path, text )
 an_rounds_main()
 {
 	replaceFunc( maps\mp\gametypes\_globallogic_player::freezePlayerForRoundEnd, ::an_freeze_for_round_end );
+	// No AFK kick (Ankh 2026-10-12): stock kicks anyone not spawned after 90 s
+	// (_globallogic_spawn.gsc:512); the engine idle timer is g_inactivity (0 = off).
+	replaceFunc( maps\mp\gametypes\_globallogic_spawn::kickIfDontSpawn, ::an_no_afk_kick );
+	setdvar( "g_inactivity", "0" );
+}
+
+an_no_afk_kick()
+{
 }
 
 an_rounds_init()
 {
+	setdvar( "g_inactivity", "0" );
 	level.an_old_dead_event = level.onDeadEvent;
 	level.onDeadEvent = ::an_dead_event;
 	level.an_old_end_game = level.onEndGame;

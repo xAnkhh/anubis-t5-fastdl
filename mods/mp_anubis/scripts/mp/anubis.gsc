@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "24";
+	return "27";
 }
 
 an_on_connect()
@@ -413,10 +413,30 @@ an_bot_connected()
 	self thread an_bot_late_spawn();
 	self thread an_bot_death_watch();
 	self thread an_bot_kill_watch();
+	self thread an_bot_class_keep();
 	for ( ;; )
 	{
 		self waittill( "spawned_player" );
 		self an_bot_spawned( "notify" );
+	}
+}
+
+// Build 23 log (CONFIRMED): the bot's class is undefined or "" (stock bot_spawn_think
+// sends changeclass "smg_mp", which level.classMap doesn't know, after every spawn).
+// Stock updateTeamStatus only counts players with a class (_globallogic.gsc:1491), so
+// the bot's team counted 0 and stock giveRankXP gave no kill XP / popup
+// (_rank.gsc:406). A non-custom class still gets the bot loadout (_class.gsc:1756).
+an_bot_class_keep()
+{
+	self endon( "disconnect" );
+	for ( ;; )
+	{
+		if ( !isDefined( self.class ) || self.class == "" || !isDefined( self.pers["class"] ) || self.pers["class"] == "" )
+		{
+			self.pers["class"] = level.defaultClass;
+			self.class = level.defaultClass;
+		}
+		wait 0.05;
 	}
 }
 
@@ -629,7 +649,7 @@ waittill_any_timeout_an( timeout, name )
 // Damage rules (Anubis, Ankh's T5 weapon list 2026-10-12):
 // - humans only die to the map (falls out of the map, death triggers, crushes);
 // - the bot never hurts anyone;
-// - the bot dies in one hit to snipers, the ballistic knife (thrown), the tomahawk
+// - the bot dies in one hit to snipers, the FAL / M14, the ballistic knife (thrown), the tomahawk
 //   and grenade launcher rounds that ricocheted first; any other hit only flinches
 //   it, except knife hits, which do nothing.
 // Plus almost hits and afterhit prone.
@@ -689,11 +709,22 @@ an_is_map_death( mod, weapon )
 	return false;
 }
 
+// Bullet guns that kill the bot (and count for almost hits): every sniper rifle and
+// the semi-auto assault rifles, FN FAL and M14 (Ankh 2026-10-13). Underbarrel
+// launchers ("gl_<gun>_mp") start with "gl" and are not these guns.
+an_is_killer_gun( weapon )
+{
+	if ( maps\mp\gametypes\_missions::getWeaponClass( weapon ) == "weapon_sniper" )
+		return true;
+	base = strTok( weapon, "_" )[0];
+	return base == "fnfal" || base == "m14";
+}
+
 an_is_killer( attacker, inflictor, weapon, mod )
 {
 	if ( !isDefined( weapon ) || weapon == "" || mod == "MOD_MELEE" )
 		return false;
-	if ( maps\mp\gametypes\_missions::getWeaponClass( weapon ) == "weapon_sniper" )
+	if ( an_is_killer_gun( weapon ) )
 		return true;
 	if ( isSubStr( weapon, "knife_ballistic" ) || isSubStr( weapon, "hatchet" ) )
 		return true;
@@ -796,7 +827,7 @@ an_xp_popup_check( headshot, longshot )
 
 // ---------------------------------------------------------------- almost hits
 
-// Sniper shot whose crosshair impact lands within 45 units of the bot's feet,
+// Sniper / FAL / M14 shot whose crosshair impact lands within 45 units of the bot's feet,
 // without hitting it (same rule as the Anubis T6 version).
 an_almost_hit_watch()
 {
@@ -808,7 +839,7 @@ an_almost_hit_watch()
 	{
 		self waittill( "weapon_fired" );
 		weapon = self getCurrentWeapon();
-		if ( weapon == "none" || weapon == "" || self.pers["an_ah"] != "1" || maps\mp\gametypes\_missions::getWeaponClass( weapon ) != "weapon_sniper" )
+		if ( weapon == "none" || weapon == "" || self.pers["an_ah"] != "1" || !an_is_killer_gun( weapon ) )
 			continue;
 		bot = an_bot_get();
 		if ( !isDefined( bot ) || !isAlive( bot ) )
@@ -1588,7 +1619,7 @@ an_do_command( cmd, arg )
 // always on: bounces, no player collision, no jump fatigue, unlimited sprint,
 // no fall damage, +5% bounce boost.
 // Manager -> Movement (host dvars, reset on a new map): ladder spins, prone spins,
-// bigger use radius (default on), Lower Death Barriers (OFF / 250 ... 2000).
+// bigger use radius (default off, Ankh 2026-10-13), Lower Death Barriers (OFF / 250 ... 2000).
 
 an_movement_init()
 {
@@ -1598,7 +1629,7 @@ an_movement_init()
 		setdvar( "an_mv_map", map );
 		setdvar( "an_mv_ladder", "1" );
 		setdvar( "an_mv_prone", "1" );
-		setdvar( "an_mv_use", "1" );
+		setdvar( "an_mv_use", "0" );
 		setdvar( "an_mv_barrier", "0" );
 	}
 	if ( getdvar( "an_bounce_boost" ) == "" )

@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "17";
+	return "18";
 }
 
 an_on_connect()
@@ -577,7 +577,30 @@ an_bot_death_watch()
 		self.an_life_armed = false;
 		self.pers["lives"] = 0;
 		an_log( "bot died, lives " + self.pers["lives"] );
+		if ( isDefined( self.pers["team"] ) && ( self.pers["team"] == "allies" || self.pers["team"] == "axis" ) )
+			level thread an_bot_death_round_check( self.pers["team"] );
 	}
+}
+
+// Build 17 log: the bot (the only defender) died at 316100 and the round kept going
+// (the auto plant fired 1.1 s later), so no killcam. If stock hasn't ended the round
+// half a second after the bot's team is wiped, the dead event is sent here: same
+// stock path (sd onDeadEvent -> last killcam + round end). The counters are logged
+// to find out why stock didn't.
+an_bot_death_round_check( team )
+{
+	level endon( "game_ended" );
+	wait 0.5;
+	if ( level.gameEnded || game["state"] != "playing" )
+		return;
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[i];
+		if ( isAlive( p ) && isDefined( p.pers["team"] ) && p.pers["team"] == team )
+			return;
+	}
+	an_log( "bot team " + team + " wiped, round still on: alive " + level.aliveCount[ team ] + " lives " + level.playerLives[ team ] + " existed " + an_bool( level.everExisted[ team ] ) + " grace " + an_bool( level.inGracePeriod ) + " numLives " + level.numLives + " -> dead event" );
+	[[ level.onDeadEvent ]]( team );
 }
 
 // common_scripts has no waittill_any_timeout in T5

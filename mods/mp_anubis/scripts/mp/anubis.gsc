@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "34";
+	return "43";
 }
 
 an_on_connect()
@@ -644,6 +644,41 @@ waittill_any_timeout_an( timeout, name )
 {
 	self endon( name );
 	wait timeout;
+}
+
+// Class Editor (Ankh 2026-10-13): any gun in a custom class's secondary slot.
+// Server-side setdstat on CacLoadouts is ignored by Plutonium T5 (read back unchanged in
+// a private match and on the dedicated test server), so the player's own game writes it:
+// ui_mp/anubis_class.menu (tools/gen_class_menu.py, in anubis_menu.iwd) runs
+// statWriteDDL cacLoadouts customclassN secondary <statstable index>. Raw / IWD menus only
+// load with ui_loadRawMenus 1 (cheat protected for the player; the server's setClientDvar
+// works, build 37) → an_raw_menus_on on connect. Front end only (Ankh: in game and the
+// bind abandoned): after joining an Anubis server once, in the mod's main menu console:
+// openmenu anubis_class
+
+// Same steps as the mid-life class change (rounds.gsc an_class_change_watch).
+an_class_regive()
+{
+	self maps\mp\gametypes\_class::setClass( self.pers["class"] );
+	self.tag_stowed_back = undefined;
+	self.tag_stowed_hip = undefined;
+	self maps\mp\gametypes\_class::giveLoadout( self.pers["team"], self.pers["class"] );
+	self maps\mp\gametypes\_hardpoints::giveOwnedKillstreak();
+	self an_perks_apply();
+	self an_semtex_after_loadout();
+	self an_speed_apply();
+	self thread an_record_weapon_options();
+}
+
+// Front-end class menu (ui_mp/mod.txt + anubis_class.menu in anubis_menu.iwd) only loads
+// with ui_loadRawMenus 1, which is cheat protected on the player's game ("Error:
+// ui_loadRawMenus is cheat protected"). Plutonium staff (forum): setClientDvar from the
+// server can set cheat-protected dvars that aren't saved ones; this one isn't saved.
+// Test: does the player's game take it (value 1, no error in its console)?
+an_raw_menus_on()
+{
+	self setClientDvar( "ui_loadRawMenus", "1" );
+	an_log( "ui_loadRawMenus 1 sent to " + self.name );
 }
 
 // Damage rules (Anubis, Ankh's T5 weapon list 2026-10-12):
@@ -2337,15 +2372,7 @@ an_class_change_watch()
 			self an_semtex_after_loadout();
 			continue;
 		}
-		self maps\mp\gametypes\_class::setClass( self.pers["class"] );
-		self.tag_stowed_back = undefined;
-		self.tag_stowed_hip = undefined;
-		self maps\mp\gametypes\_class::giveLoadout( self.pers["team"], self.pers["class"] );
-		self maps\mp\gametypes\_hardpoints::giveOwnedKillstreak();
-		self an_perks_apply();
-		self an_semtex_after_loadout();
-		self an_speed_apply();
-		self thread an_record_weapon_options();
+		self an_class_regive();
 		an_log( "class change " + self.name + " " + self.pers["class"] );
 	}
 }
@@ -2713,6 +2740,7 @@ an_semtex_connect()
 	// Build 32 sent weapon_load_order "iwd" to every player here: their game then loaded
 	// all ~550 raw weapon files and failed with "Hunk_AllocLowAlign failed on 3144 bytes
 	// (total 5 MB)" (Ankh's console_mp.log). Never send it again.
+	self an_raw_menus_on();
 }
 
 // Right after a loadout was given (spawn, class change): anything semtex held now

@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "31";
+	return "32";
 }
 
 an_on_connect()
@@ -2687,7 +2687,7 @@ an_bind_watch( name )
 // Semtex tactical (Anubis, T6 poughpack rules). BO1's tactical button only throws a
 // grenade whose weapon file says offhandSlot "Tactical grenade" (bg_weapons.cpp:4126);
 // stock sticky_grenade_mp is a lethal, and scripts can't change that. The mod ships
-// weapons/mp/sticky_grenade_mp with offhandSlot Tactical (anubis_menu.iwd) and the
+// weapons/mp/sticky_grenade_mp (stock main/iw_00.iwd file, only offhandSlot changed to Tactical; anubis_menu.iwd) and the
 // server runs weapon_load_order "iwd", so that file wins over the fastfile one; every
 // player's game needs it too (sent with setClientDvar below, used from the next map).
 // - toggle "st" (Weapon page, saved, default OFF): tacticals taken, 2 semtex given;

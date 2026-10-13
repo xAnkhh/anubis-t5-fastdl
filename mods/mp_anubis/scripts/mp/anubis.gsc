@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "22";
+	return "23";
 }
 
 an_on_connect()
@@ -662,7 +662,7 @@ an_player_damage( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapo
 			// a killing hit must kill, not down the bot into last stand
 			self an_bot_no_last_stand();
 			iDamage = self.health + 1000;
-			eAttacker thread an_on_bot_kill( self, sWeapon );
+			eAttacker thread an_on_bot_kill( self, sWeapon, maps\mp\gametypes\_globallogic_utils::isHeadShot( sWeapon, sHitLoc, sMeansOfDeath ) );
 		}
 		else
 		{
@@ -719,12 +719,12 @@ an_restore_health()
 
 // ---------------------------------------------------------------- after the bot dies
 
-an_on_bot_kill( bot, weapon )
+an_on_bot_kill( bot, weapon, headshot )
 {
 	self endon( "disconnect" );
 	m = int( distance( self.origin, bot.origin ) * 0.0254 );
 	an_log( "bot killed by " + self.name + " " + weapon + " " + m + "m" );
-	self thread an_xp_popup_check();
+	self thread an_xp_popup_check( headshot );
 	if ( self.pers["an_afh"] == "stance" )
 		self thread an_afterhit_prone( false );
 	else if ( self.pers["an_afh"] == "instant" )
@@ -752,31 +752,33 @@ an_afterhit_prone( instant )
 	}
 }
 
-// Ankh (build 21): no "+500" kill popup on the server. Stock shows it from
-// _rank::giveRankXP -> updateRankScoreHUD (S&D kill 500, headshot +500); this logs
-// every condition it depends on, 0.2 s after the kill.
-an_xp_popup_check()
+// Kill XP popup ("+500", headshot "+1000"): stock _rank::giveRankXP -> updateRankScoreHUD.
+// Build 22 log: giveRankXP saw level.playerCount 1/0 (one team empty) and gave nothing
+// (_rank.gsc:406 needs a player on both teams). If the kill gave no XP, give it again
+// through giveRankXP's own devAdd argument, which skips that team check only.
+// Every player's team / class / state is logged to find why one isn't counted.
+an_xp_popup_check( headshot )
 {
 	self endon( "disconnect" );
-	before = 0;
-	if ( isDefined( self.pers["summary"] ) && isDefined( self.pers["summary"]["xp"] ) )
-		before = self.pers["summary"]["xp"];
-	wait 0.2;
-	after = 0;
-	if ( isDefined( self.pers["summary"] ) && isDefined( self.pers["summary"]["xp"] ) )
-		after = self.pers["summary"]["xp"];
-	line = "xp popup " + self.name;
-	line = line + " rankEnabled " + an_bool( isDefined( level.rankEnabled ) && level.rankEnabled );
-	line = line + " online " + an_bool( level.onlineGame ) + " wager " + an_bool( level.wagerMatch ) + " hardcore " + an_bool( level.hardcoreMode );
-	line = line + " count " + level.playerCount["allies"] + "/" + level.playerCount["axis"];
-	line = line + " enableText " + an_bool( isDefined( self.enableText ) && self.enableText );
-	line = line + " hud " + an_bool( isDefined( self.hud_rankscroreupdate ) );
-	if ( isDefined( self.hud_rankscroreupdate ) )
-		line = line + " alpha " + self.hud_rankscroreupdate.alpha;
-	if ( isDefined( self.rankUpdateTotal ) )
-		line = line + " total " + self.rankUpdateTotal;
-	line = line + " xp " + before + "->" + after + " kills " + self.kills + " state " + game["state"];
+	waittillframeend;
+	wait 0.05;
+	given = ( isDefined( self.rankUpdateTotal ) && self.rankUpdateTotal > 0 ) || ( isDefined( self.hud_rankscroreupdate ) && self.hud_rankscroreupdate.alpha > 0 );
+	line = "xp popup " + self.name + " given " + an_bool( given ) + " headshot " + an_bool( headshot );
+	line = line + " count " + level.playerCount["allies"] + "/" + level.playerCount["axis"] + " state " + game["state"];
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[i];
+		c = "undefined";
+		if ( isDefined( p.class ) )
+			c = "[" + p.class + "]";
+		line = line + " | " + p.name + " team " + p.team + " class " + c + " session " + p.sessionstate;
+	}
 	an_log( line );
+	if ( given || !isDefined( level.rankEnabled ) || !level.rankEnabled )
+		return;
+	self thread maps\mp\gametypes\_rank::giveRankXP( "kill", undefined, true );
+	if ( headshot )
+		self thread maps\mp\gametypes\_rank::giveRankXP( "headshot", undefined, true );
 }
 
 // ---------------------------------------------------------------- almost hits

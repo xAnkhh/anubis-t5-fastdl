@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "10";
+	return "11";
 }
 
 an_on_connect()
@@ -1036,6 +1036,8 @@ an_page_rows( page )
 	{
 		rows[ rows.size ] = an_row( "wset", "Instashoots", "is" );
 		rows[ rows.size ] = an_row( "wset", "Always Canswap", "ac" );
+		rows[ rows.size ] = an_row( "wset", "No Cockbacks", "nc" );
+		rows[ rows.size ] = an_row( "wset", "Force Cockbacks", "fc" );
 		rows[ rows.size ] = an_row( "wset", "One Bullet", "ob" );
 		rows[ rows.size ] = an_row( "page", "Canswap Drop", "drop" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
@@ -1075,6 +1077,7 @@ an_page_rows( page )
 	{
 		rows[ rows.size ] = an_row( "bindinfo", "Open This Menu", "menu" );
 		rows[ rows.size ] = an_row( "bindinfo", "Give All Killstreaks", "killstreaks" );
+		rows[ rows.size ] = an_row( "bindinfo", "Smooth Action", "smooth" );
 		if ( self an_has_access() )
 		{
 			rows[ rows.size ] = an_row( "bindinfo", "Spawn Bot", "spawnbot" );
@@ -1966,7 +1969,7 @@ an_class_change_watch()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob afh ah", " " );
+	return strTok( "is ac ob nc fc afh ah", " " );
 }
 
 an_player_file()
@@ -2150,7 +2153,7 @@ an_loop_toggle()
 
 an_bind_list()
 {
-	return strTok( "menu spawnbot tpbot setupbot killstreaks", " " );
+	return strTok( "menu spawnbot tpbot setupbot killstreaks smooth", " " );
 }
 
 an_bind_register()
@@ -2186,6 +2189,10 @@ an_bind_watch( name )
 				break;
 			case "killstreaks":
 				self an_do_command( "killstreaks", "" );
+				break;
+			case "smooth":
+				if ( isAlive( self ) && !self.an_menu_open )
+					self an_smooth_action();
 				break;
 		}
 	}
@@ -2382,7 +2389,7 @@ an_first_rotation_map()
 
 an_weapons_defaults()
 {
-	keys = strTok( "is ac ob", " " );
+	keys = strTok( "is ac ob nc fc", " " );
 	for ( i = 0; i < keys.size; i++ )
 		if ( !isDefined( self.pers[ "an_" + keys[i] ] ) )
 			self.pers[ "an_" + keys[i] ] = "";
@@ -2410,6 +2417,7 @@ an_weapons_player()
 
 an_weapons_spawned()
 {
+	self an_plugin_sync();
 	self thread an_weapon_watch();
 	self thread an_ammo_loop();
 	self thread an_record_weapon_options();
@@ -2453,7 +2461,15 @@ an_weapon_setting_cycle( key )
 	else
 		v = "";
 	self.pers[ "an_" + key ] = v;
+	// No cockbacks and force cockbacks never both on (the plugin also lets force win)
+	if ( key == "nc" && v != "" )
+		self.pers["an_fc"] = "";
+	if ( key == "fc" && v != "" )
+		self.pers["an_nc"] = "";
+	if ( ( key == "nc" || key == "fc" ) && !an_weapons_plugin() )
+		self iPrintLn( "Cockback settings only work on the Anubis server" );
 	an_log( "setting " + key + " = " + v + " by " + self.name );
+	self an_plugin_sync();
 	if ( key == "ob" && v != "" )
 		self an_one_bullet_now();
 }
@@ -2479,11 +2495,12 @@ an_weapon_watch()
 		self waittill( "weapon_change", weapon );
 		if ( !isDefined( weapon ) || weapon == "none" || !self an_is_primary( weapon ) )
 			continue;
-		if ( self.pers["an_ac"] != "" )
+		self an_plugin_sync();
+		if ( self.pers["an_ac"] != "" && !an_weapons_plugin() )
 			self an_prime_canswaps( weapon );
 		if ( self an_setting_applies( "ob", weapon ) )
 			self setWeaponAmmoClip( weapon, 1 );
-		if ( self an_setting_applies( "is", weapon ) )
+		if ( self an_setting_applies( "is", weapon ) && !an_weapons_plugin() )
 		{
 			self setSpawnWeapon( weapon );
 			self thread an_instashoot_watch( weapon );
@@ -2782,4 +2799,80 @@ an_upper( text )
 		out = out + c;
 	}
 	return out;
+}
+
+// ---------------------------------------------------------------- server plugin (anubis-weapons-t5)
+
+// The server plugin registers an_weaponsPatched 1 when its patch is active.
+an_weapons_plugin()
+{
+	return getdvar( "an_weaponsPatched" ) == "1";
+}
+
+// The plugin reads per client slot the weapon indices each setting covers:
+// two per dvar (index + index2 * 65536), the "x" dvar holds two more (alternate
+// modes such as the underbarrel grenade launcher are their own weapons).
+an_plugin_sync()
+{
+	if ( !an_weapons_plugin() || self an_is_bot() )
+		return;
+	slot = self getEntityNumber();
+	keys = strTok( "is:isw:isx ac:acw:acx nc:ncw:ncx fc:fcw:fcx", " " );
+	for ( k = 0; k < keys.size; k++ )
+	{
+		t = strTok( keys[k], ":" );
+		list = self an_plugin_indices( t[0] );
+		self an_plugin_set( "an_" + t[1] + slot, list, 0 );
+		self an_plugin_set( "an_" + t[2] + slot, list, 2 );
+	}
+}
+
+an_plugin_indices( key )
+{
+	list = [];
+	weapons = self getWeaponsList();
+	for ( i = 0; i < weapons.size; i++ )
+	{
+		w = weapons[i];
+		if ( w == "none" || w.size < 4 )
+			continue;
+		// the underbarrel launcher is its own weapon, "gl_<gun>_mp": it follows its gun's setting
+		alt = getSubStr( w, 0, 3 ) == "gl_";
+		gun = w;
+		if ( alt )
+			gun = getSubStr( w, 3 );
+		if ( !self an_setting_applies( key, gun ) || ( !alt && !self an_is_primary( w ) ) )
+			continue;
+		idx = getWeaponIndexFromName( w );
+		if ( isDefined( idx ) && idx > 0 && list.size < 4 )
+			list[ list.size ] = idx;
+	}
+	return list;
+}
+
+an_plugin_set( name, list, from )
+{
+	v = 0;
+	if ( list.size > from )
+		v = list[ from ];
+	if ( list.size > from + 1 )
+		v = v + list[ from + 1 ] * 65536;
+	if ( getdvar( name ) != "" + v )
+	{
+		setdvar( name, v );
+		an_log( "plugin " + name + " = " + v + " (" + self.name + ")" );
+	}
+}
+
+// Smooth action: the plugin forces the idle animation once per counter change.
+an_smooth_action()
+{
+	if ( !an_weapons_plugin() )
+	{
+		self iPrintLn( "Smooth action only works on the Anubis server" );
+		return;
+	}
+	d = "an_sm" + self getEntityNumber();
+	setdvar( d, int( getdvar( d ) ) + 1 );
+	an_log( "smooth " + self.name );
 }

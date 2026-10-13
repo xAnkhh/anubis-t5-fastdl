@@ -23,7 +23,7 @@ init()
 	an_roles_init();
 	level thread an_server_dvars();
 	level thread an_bot_init();
-	level thread an_vote_watch();
+	an_vote_init();
 	if ( getdvar( "g_gametype" ) == "sd" )
 		level thread an_sui_watch();
 	level thread an_on_connect();
@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "14";
+	return "15";
 }
 
 an_on_connect()
@@ -62,6 +62,8 @@ an_player_connected()
 	self.an_menu_open = false;
 	self an_menu_register_commands();
 	self thread an_menu_input();
+	self thread an_smooth_bind_watch();
+	self thread an_team_on_connect();
 	self thread an_menu_close_on_death();
 	self thread an_menu_close_on_end();
 	self thread an_weapons_player();
@@ -403,20 +405,28 @@ an_bot_connected()
 			team = level.an_bot_team;
 		self thread maps\mp\gametypes\_bot::bot_spawn_think( team );
 	}
+	self.an_alive_seen = false;
+	self.an_life_armed = false;
 	self thread an_bot_hold();
 	self thread an_bot_late_spawn();
-	if ( isAlive( self ) )
-		self an_bot_spawned();
+	self thread an_bot_death_watch();
 	for ( ;; )
 	{
 		self waittill( "spawned_player" );
-		self an_bot_spawned();
+		self an_bot_spawned( "notify" );
 	}
 }
 
-an_bot_spawned()
+// Build 14 log: the bot was alive in some rounds without "spawned_player" ever
+// reaching this script, so the hold loop also runs this on every dead -> alive
+// change. Once per life.
+an_bot_spawned( how )
 {
-	an_log( "bot spawned, setup " + getdvar( "an_bot_setup" ) );
+	if ( isDefined( self.an_life_armed ) && self.an_life_armed )
+		return;
+	self.an_life_armed = true;
+	self.an_alive_seen = true;
+	an_log( "bot spawned (" + how + "), setup " + getdvar( "an_bot_setup" ) );
 	self thread an_bot_pistol();
 	if ( an_bot_setup() )
 		self an_bot_to_saved_spot();
@@ -429,6 +439,8 @@ an_bot_hold()
 	was_setup = false;
 	for ( ;; )
 	{
+		if ( isAlive( self ) && !( isDefined( self.an_life_armed ) && self.an_life_armed ) )
+			self an_bot_spawned( "seen alive" );
 		if ( isAlive( self ) )
 		{
 			if ( an_bot_setup() )
@@ -512,28 +524,59 @@ an_bot_to_saved_spot()
 an_bot_late_spawn()
 {
 	self endon( "disconnect" );
+	self endon( "death" );
 	level endon( "game_ended" );
 	for ( tries = 0; tries < 3; tries++ )
 	{
 		for ( i = 0; i < 100; i++ )
 		{
-			if ( isAlive( self ) )
+			if ( self.an_alive_seen || isAlive( self ) )
 				return;
 			if ( isDefined( self.pers["team"] ) && ( self.pers["team"] == "allies" || self.pers["team"] == "axis" ) && isDefined( self.class ) && self.class != "" && game["state"] == "playing" && !level.inPrematchPeriod )
 				break;
 			wait 0.1;
 		}
 		wait 0.5;
-		if ( isAlive( self ) )
+		// a bot that was alive this round is never brought back (its death has to
+		// end the round with the killcam)
+		if ( self.an_alive_seen || isAlive( self ) )
 			return;
-		if ( isDefined( self.waitingToSpawn ) && self.waitingToSpawn )
-			continue;
 		self.hasSpawned = true;
 		if ( !isDefined( self.pers["lives"] ) || self.pers["lives"] < 1 )
 			self.pers["lives"] = 1;
-		an_log( "bot late spawn try " + ( tries + 1 ) );
-		self thread maps\mp\gametypes\_globallogic_spawn::spawnClient();
+		waiting = isDefined( self.waitingToSpawn ) && self.waitingToSpawn;
+		an_log( "bot late spawn try " + ( tries + 1 ) + " maySpawn " + an_bool( self maps\mp\gametypes\_globallogic_spawn::maySpawn() ) + " waiting " + an_bool( waiting ) + " session " + self.sessionstate );
+		if ( waiting || tries > 0 )
+		{
+			// the stock wait never finished last time: spawn directly
+			self.waitingToSpawn = false;
+			self notify( "end_respawn" );
+			self thread [[ level.spawnPlayer ]]();
+		}
+		else
+			self thread maps\mp\gametypes\_globallogic_spawn::spawnClient();
 		self waittill_any_timeout_an( 3, "spawned_player" );
+		wait 0.05;
+		if ( isAlive( self ) )
+		{
+			self an_bot_spawned( "late spawn" );
+			return;
+		}
+	}
+	an_log( "bot late spawn gave up" );
+}
+
+// Every life counts once: with a life left over, stock S&D counts the bot's team as
+// still in the round and the round doesn't end on the kill (no killcam).
+an_bot_death_watch()
+{
+	self endon( "disconnect" );
+	for ( ;; )
+	{
+		self waittill( "death" );
+		self.an_life_armed = false;
+		self.pers["lives"] = 0;
+		an_log( "bot died, lives " + self.pers["lives"] );
 	}
 }
 
@@ -548,7 +591,8 @@ waittill_any_timeout_an( timeout, name )
 // - humans only die to the map (falls out of the map, death triggers, crushes);
 // - the bot never hurts anyone;
 // - the bot dies in one hit to snipers, the ballistic knife (thrown), the tomahawk
-//   and grenade launcher rounds that ricocheted first; any other hit only flinches it.
+//   and grenade launcher rounds that ricocheted first; any other hit only flinches
+//   it, except knife hits, which do nothing.
 // Plus almost hits and afterhit prone.
 
 an_player_damage( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc, timeOffset )
@@ -563,6 +607,15 @@ an_player_damage( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapo
 	}
 	else if ( attacker_is_player && !eAttacker an_is_bot() )
 	{
+		// Build 14: a knife hit that left the bot alive crashed the attacker's game
+		// (server log: "bot hit by Ankh knife_mp MOD_MELEE", then his client died).
+		// Stock BO1 knives always kill, so a surviving knife victim never happens
+		// there: knife hits on the bot are dropped.
+		if ( sMeansOfDeath == "MOD_MELEE" )
+		{
+			an_log( "bot knifed by " + eAttacker.name + " (ignored)" );
+			return;
+		}
 		eAttacker.an_last_hit_time = getTime();
 		an_log( "bot hit by " + eAttacker.name + " " + sWeapon + " " + sMeansOfDeath );
 		if ( an_is_killer( eAttacker, eInflictor, sWeapon, sMeansOfDeath ) )
@@ -738,8 +791,11 @@ an_almost_hit_toggle()
 // Menu: script-drawn hud elements (T5 has no LUI; see NOTES.md section 5).
 // Layout and colours follow the approved Anubis look (spine + card, black /
 // grey / dark red), scaled to the 640x480 hud space.
-// Budget: T5 has 31 current + 31 archival hud elems per player, so the menu
-// uses 33 elements, created on open and destroyed on close.
+// Budget: T5 sends 31 "current" (archived = false) + 31 "archived" hud elems per
+// player and silently drops the rest (t5mp.exe 0x569DF0, CONFIRMED). Stock already
+// holds ~20 current ones (perk/loadout icons + texts from every spawn, objective
+// points), so build 14's 23 current menu elems lost rows 5+. Now: 10 current
+// (selection slab + bar, 8 value texts), 18 archived (frame, 8 row labels).
 
 an_menu_layout()
 {
@@ -751,7 +807,7 @@ an_menu_layout()
 	l.pad = 15;
 	l.header = 75;
 	l.row = 21;
-	l.rows = 10;
+	l.rows = 8;
 	l.footer = 34;
 	l.height = l.header + l.row * l.rows + l.footer;
 	l.top = int( ( 480 - l.height ) / 2 );
@@ -765,6 +821,8 @@ an_menu_register_commands()
 	self notifyOnPlayerCommand( "an_up_key", "+forward" );
 	self notifyOnPlayerCommand( "an_down", "+actionslot 2" );
 	self notifyOnPlayerCommand( "an_down_key", "+back" );
+	self notifyOnPlayerCommand( "an_dpad_left", "+actionslot 3" );
+	self notifyOnPlayerCommand( "an_dpad_right", "+actionslot 4" );
 	self notifyOnPlayerCommand( "an_select", "+usereload" );
 	self notifyOnPlayerCommand( "an_select", "+activate" );
 	self notifyOnPlayerCommand( "an_select", "+gostand" );
@@ -926,15 +984,13 @@ an_menu_create()
 	h["spine"] = self an_hud_rect( l.left, l.top, l.spine_w, l.height, ( 0.025, 0.025, 0.025 ), 0.96, 1, true );
 	h["card"] = self an_hud_rect( l.card_x, l.top, l.card_w, l.height, ( 0.055, 0.055, 0.055 ), 0.93, 1, true );
 	h["edge"] = self an_hud_rect( l.card_x, l.top, 48, 2, accent, 1, 3, true );
-	h["eye"] = self an_hud_rect( l.left + 10, l.top + 12, 9, 9, accent, 1, 3, true );
 	h["brand"] = self an_hud_text( hx, l.top + 13, "left", "small", 1.1, accent, 1, 4, true );
 	h["build"] = self an_hud_text( l.card_x + l.card_w - l.pad, l.top + 13, "right", "small", 1.1, dim, 1, 4, true );
 	h["title"] = self an_hud_text( hx, l.top + 35, "left", "objective", 1.7, text, 1, 4, true );
 	h["path"] = self an_hud_text( hx, l.top + 55, "left", "small", 1.1, dim, 1, 4, true );
-	h["rule"] = self an_hud_rect( hx, l.top + 66, 16, 2, accent, 1, 3, true );
 	h["slab"] = self an_hud_rect( l.card_x, l.rows_y, l.card_w, l.row, ( 0.15, 0.15, 0.15 ), 0.95, 2, false );
 	h["bar"] = self an_hud_rect( l.card_x, l.rows_y, 3, l.row, accent, 1, 3, false );
-	h["marker"] = self an_hud_rect( l.left + 11, l.rows_y + 7, 7, 7, accent, 1, 3, false );
+	h["marker"] = self an_hud_rect( l.left + 11, l.rows_y + 7, 7, 7, accent, 1, 3, true );
 	h["thumb"] = self an_hud_rect( l.left + l.spine_w - 4, l.rows_y, 2, l.row, accent, 0.4, 3, true );
 	h["hint"] = self an_hud_text( hx, l.rows_y + l.row * l.rows + 17, "left", "small", 1.0, dim, 1, 4, true );
 
@@ -943,7 +999,7 @@ an_menu_create()
 	for ( i = 0; i < l.rows; i++ )
 	{
 		y = l.rows_y + i * l.row + int( l.row / 2 );
-		self.an_label[i] = self an_hud_text( hx + 2, y, "left", "default", 1.3, text, 1, 4, false );
+		self.an_label[i] = self an_hud_text( hx + 2, y, "left", "default", 1.3, text, 1, 4, true );
 		self.an_value[i] = self an_hud_text( l.card_x + l.card_w - l.pad, y, "right", "default", 1.3, dim, 1, 4, false );
 	}
 	self.an_h = h;
@@ -1078,6 +1134,7 @@ an_page_rows( page )
 	{
 		rows[ rows.size ] = an_row( "bindinfo", "Open This Menu", "menu" );
 		rows[ rows.size ] = an_row( "bindinfo", "Give All Killstreaks", "killstreaks" );
+		rows[ rows.size ] = an_row( "sb", "Smooth Action Bind", "sb" );
 		rows[ rows.size ] = an_row( "bindinfo", "Smooth Action", "smooth" );
 		if ( self an_has_access() )
 		{
@@ -1184,6 +1241,10 @@ an_row_value( r )
 			if ( an_is_manager_guid( r.arg ) )
 				return "MANAGER";
 			return "OFF";
+		case "sb":
+			if ( self.pers["an_sb"] == "off" )
+				return "OFF";
+			return "DPAD " + an_upper( self.pers["an_sb"] );
 		case "ah":
 			if ( self.pers["an_ah"] == "1" )
 				return "ON";
@@ -1256,7 +1317,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -1333,6 +1394,7 @@ an_menu_select()
 		case "wset":
 		case "afh":
 		case "ah":
+		case "sb":
 		case "drop":
 		case "mv":
 		case "loop":
@@ -1379,6 +1441,7 @@ an_do_command( cmd, arg )
 		case "wset": self an_weapon_setting_cycle( arg ); break;
 		case "afh": self an_afterhit_cycle(); break;
 		case "ah": self an_almost_hit_toggle(); break;
+		case "sb": self an_smooth_bind_cycle(); break;
 		case "save": self an_save_personal(); break;
 		case "load": self an_load_personal( false ); break;
 		case "bot_save": self an_save_bot(); break;
@@ -1724,7 +1787,8 @@ an_file_write( path, text )
 // - eliminations during the grace period end the round at once;
 // - full 7 rounds: a winner that is already ahead gives the point to the other team;
 // - humans can move during the countdown; short free window after the round ends;
-// - always-on UAV for the human team; match bonus on the outcome screen; class change any time.
+// - always-on UAV for the human team; match bonus on the outcome screen; class change any time;
+// - humans join the team the bot isn't on by themselves and can't switch teams.
 
 // Plutonium docs: replaceFunc belongs in main(), which runs before the stock scripts.
 an_rounds_main()
@@ -1738,6 +1802,7 @@ an_rounds_init()
 	level.onDeadEvent = ::an_dead_event;
 	level.an_old_end_game = level.onEndGame;
 	level.onEndGame = ::an_on_end_game;
+	an_teams_init();
 	game["strings"]["change_class"] = " ";
 
 	level thread an_countdown_free();
@@ -1978,6 +2043,94 @@ an_class_change_watch()
 	}
 }
 
+// ---------------------------------------------------------------- teams
+
+// Ankh 2026-10-12: players join the team the bot isn't on by themselves and can't
+// switch. Stock team picks go through level.autoassign / level.allies / level.axis
+// (_globallogic_ui.gsc:22); the bot joins through _bot.gsc's own copy, so these only
+// see humans. Team balancing is off (it could move a human onto the bot's team).
+an_teams_init()
+{
+	level.an_old_autoassign = level.autoassign;
+	level.an_old_allies = level.allies;
+	level.an_old_axis = level.axis;
+	level.autoassign = ::an_team_auto;
+	level.allies = ::an_team_allies;
+	level.axis = ::an_team_axis;
+	setdvar( "scr_teambalance", "0" );
+	setdvar( "scr_" + getdvar( "g_gametype" ) + "_teamBalanceEndOfRound", "0" );
+	level.teambalance = 0;
+	level.teamBalanceEndOfRound = 0;
+}
+
+an_human_side()
+{
+	bot = an_bot_get();
+	if ( isDefined( bot ) && isDefined( bot.pers["team"] ) && ( bot.pers["team"] == "allies" || bot.pers["team"] == "axis" ) )
+		return getOtherTeam( bot.pers["team"] );
+	team = an_human_team();
+	if ( isDefined( team ) )
+		return team;
+	return "allies";
+}
+
+an_team_join( team )
+{
+	if ( team == "allies" )
+		self [[ level.an_old_allies ]]();
+	else
+		self [[ level.an_old_axis ]]();
+}
+
+an_team_pick( wanted )
+{
+	if ( self an_is_bot() )
+	{
+		if ( wanted == "auto" )
+			self [[ level.an_old_autoassign ]]();
+		else
+			self an_team_join( wanted );
+		return;
+	}
+	side = an_human_side();
+	on_team = isDefined( self.pers["team"] ) && ( self.pers["team"] == "allies" || self.pers["team"] == "axis" );
+	if ( on_team && wanted != "auto" && wanted != self.pers["team"] )
+	{
+		self maps\mp\gametypes\_globallogic_ui::closeMenus();
+		self iPrintLn( "Teams are locked" );
+		return;
+	}
+	if ( on_team )
+		side = self.pers["team"];
+	an_log( "team " + self.name + " -> " + side + " (asked " + wanted + ")" );
+	self an_team_join( side );
+}
+
+an_team_auto()
+{
+	self an_team_pick( "auto" );
+}
+
+an_team_allies()
+{
+	self an_team_pick( "allies" );
+}
+
+an_team_axis()
+{
+	self an_team_pick( "axis" );
+}
+
+// New players skip the team menu: the team the bot isn't on, then the class menu.
+an_team_on_connect()
+{
+	self endon( "disconnect" );
+	wait 0.1;
+	if ( isDefined( self.pers["team"] ) && ( self.pers["team"] == "allies" || self.pers["team"] == "axis" ) )
+		return;
+	self an_team_pick( "auto" );
+}
+
 // Save / load (Anubis rules): personal settings saved per GUID on the server
 // (scriptdata/anubis/player_<guid>.txt), loaded by themselves on join; never saved
 // by themselves. Bot settings (setup, bot spot and sui spot for this map) are a
@@ -1985,7 +2138,7 @@ an_class_change_watch()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh ah", " " );
+	return strTok( "is ac ob nc fc afh ah sb", " " );
 }
 
 an_player_file()
@@ -2044,6 +2197,7 @@ an_valid_setting( key, v )
 	{
 		case "afh": return v == "off" || v == "stance" || v == "instant";
 		case "ah": return v == "0" || v == "1";
+		case "sb": return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	}
 	// weapon settings: "", "all" or a gun base name (letters / digits only)
 	for ( i = 0; i < v.size; i++ )
@@ -2214,20 +2368,32 @@ an_bind_watch( name )
 	}
 }
 
-// End-of-match map vote (Anubis): 3 random maps + Random, 15 s, inside the stock
-// 30 s intermission (_globallogic.gsc: level.intermission, then exitLevel after
-// scr_intermission_time). Restart Loop skips the vote; an empty server goes back to
-// the first map of its rotation. Dedicated: the result goes into
-// sv_maprotationcurrent for the stock exitLevel; private match: host console "map".
+// End-of-match map vote (Anubis): 3 random maps + Random, 15 s. Build 14 ran it in
+// the intermission, where the scoreboard takes every key (server log: no menu keys
+// from anyone during the vote). It now runs inside the stock onRoundEndGame hook,
+// which stock endGame calls once, when the match is really over, before the outcome
+// screen and the scoreboard (_globallogic.gsc endGame). Players are unfrozen but held
+// in place (frozen players' dpad never reaches the server, build 1). Restart Loop
+// skips the vote; an empty server goes back to the first map of its rotation.
+// Dedicated: the result goes into sv_maprotationcurrent for the stock exitLevel;
+// private match: host console "map".
 
-an_vote_watch()
+an_vote_init()
 {
-	level waittill( "game_ended" );
-	for ( i = 0; i < 600 && !( isDefined( level.intermission ) && level.intermission ); i++ )
-		wait 0.1;
-	if ( !isDefined( level.intermission ) || !level.intermission )
-		return;
+	level.an_old_round_end_game = level.onRoundEndGame;
+	level.onRoundEndGame = ::an_on_round_end_game;
+}
 
+an_on_round_end_game( winner )
+{
+	if ( isDefined( level.an_old_round_end_game ) )
+		winner = [[ level.an_old_round_end_game ]]( winner );
+	an_vote_run();
+	return winner;
+}
+
+an_vote_run()
+{
 	if ( getdvar( "an_loop" ) == "1" )
 	{
 		an_next_map( getdvar( "mapname" ), "restart loop" );
@@ -2254,15 +2420,22 @@ an_vote_watch()
 		wait 0.5;
 		humans = an_humans();
 		for ( i = 0; i < humans.size; i++ )
+		{
 			if ( isDefined( humans[i].an_menu_open ) && humans[i].an_menu_open && humans[i].an_page == "vote" )
 				humans[i] an_menu_render();
+			else
+				humans[i] thread an_vote_open();
+		}
 	}
 
 	winner = an_vote_result();
 	humans = an_humans();
 	for ( i = 0; i < humans.size; i++ )
+	{
 		if ( isDefined( humans[i].an_menu_open ) && humans[i].an_menu_open )
 			humans[i] an_menu_close();
+		humans[i] freeze_player_controls( true );
+	}
 	iPrintLnBold( "Next map: " + an_map_name( winner ) );
 	an_next_map( winner, "vote" );
 }
@@ -2362,6 +2535,10 @@ an_vote_open()
 	self.an_sel = 0;
 	self.an_top = 0;
 	self.an_stack = [];
+	// held in place, not frozen, so the menu keys reach the server
+	self freeze_player_controls( false );
+	self setMoveSpeedScale( 0 );
+	self disableWeapons();
 	self an_menu_create();
 	self an_menu_render();
 }
@@ -2413,6 +2590,8 @@ an_weapons_defaults()
 		self.pers["an_afh"] = "off";
 	if ( !isDefined( self.pers["an_ah"] ) )
 		self.pers["an_ah"] = "1";
+	if ( !isDefined( self.pers["an_sb"] ) )
+		self.pers["an_sb"] = "off";
 }
 
 an_weapons_player()
@@ -2891,4 +3070,31 @@ an_smooth_action()
 	d = "an_sm" + self getEntityNumber();
 	setdvar( d, int( getdvar( d ) ) + 1 );
 	an_log( "smooth " + self.name );
+}
+
+// Smooth action on a dpad button (Bindables -> Smooth Action Bind): OFF / up / down
+// / left / right. The button keeps its stock use too (as IW4x smooth binds). ADS +
+// dpad up stays the menu key, so a dpad up bind only fires without ADS.
+an_smooth_bind_cycle()
+{
+	list = strTok( "off up down left right", " " );
+	next = list[0];
+	for ( i = 0; i < list.size; i++ )
+		if ( list[i] == self.pers["an_sb"] && i + 1 < list.size )
+			next = list[ i + 1 ];
+	self.pers["an_sb"] = next;
+}
+
+an_smooth_bind_watch()
+{
+	self endon( "disconnect" );
+	for ( ;; )
+	{
+		cmd = self waittill_any_return( "an_up", "an_down", "an_dpad_left", "an_dpad_right" );
+		b = self.pers["an_sb"];
+		if ( !isDefined( b ) || b == "off" || self.an_menu_open || !isAlive( self ) )
+			continue;
+		if ( ( b == "up" && cmd == "an_up" && !self adsButtonPressed() ) || ( b == "down" && cmd == "an_down" ) || ( b == "left" && cmd == "an_dpad_left" ) || ( b == "right" && cmd == "an_dpad_right" ) )
+			self an_smooth_action();
+	}
 }

@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "13";
+	return "14";
 }
 
 an_on_connect()
@@ -77,7 +77,7 @@ an_is_bot()
 	if ( isDefined( self.pers ) && isDefined( self.pers["isBot"] ) && self.pers["isBot"] )
 		return true;
 	// test clients carry "bot" in their guid (Plutonium T5 community mods rely on this)
-	return isSubStr( self getguid(), "bot" );
+	return isSubStr( an_guid( self ), "bot" );
 }
 
 an_is_dedicated()
@@ -1093,9 +1093,9 @@ an_page_rows( page )
 		for ( i = 0; i < level.players.size; i++ )
 		{
 			p = level.players[i];
-			if ( p an_is_bot() || p isDemoClient() || p getguid() == an_owner_guid() )
+			if ( p an_is_bot() || p isDemoClient() || an_guid( p ) == an_owner_guid() )
 				continue;
-			rows[ rows.size ] = an_row( "mgr", p.name, p getguid() );
+			rows[ rows.size ] = an_row( "mgr", p.name, an_guid( p ) );
 		}
 		if ( rows.size == 0 )
 			rows[ rows.size ] = an_row( "info", "No other players here", "" );
@@ -1566,6 +1566,14 @@ an_bounce_boost_loop()
 // set by the owner in-game). Owner and managers get the host pages on a dedicated
 // server; in a private match the host has them too.
 
+// getguid() is a number in T5; comparing a number with a string matched every
+// player (build 13 server log: three different GUIDs all got "owner"). All GUID
+// comparisons use this string form.
+an_guid( player )
+{
+	return "" + player getguid();
+}
+
 an_owner_guid()
 {
 	return "5112037";
@@ -1589,7 +1597,7 @@ an_roles_init()
 
 an_role()
 {
-	g = self getguid();
+	g = an_guid( self );
 	if ( g == an_owner_guid() )
 		return "owner";
 	for ( i = 0; i < level.an_managers.size; i++ )
@@ -1661,7 +1669,7 @@ an_manager_toggle( guid )
 an_player_by_guid( guid )
 {
 	for ( i = 0; i < level.players.size; i++ )
-		if ( !level.players[i] an_is_bot() && level.players[i] getguid() == guid )
+		if ( !level.players[i] an_is_bot() && an_guid( level.players[i] ) == guid )
 			return level.players[i];
 	return undefined;
 }

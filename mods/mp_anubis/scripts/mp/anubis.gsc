@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "21";
+	return "22";
 }
 
 an_on_connect()
@@ -724,6 +724,7 @@ an_on_bot_kill( bot, weapon )
 	self endon( "disconnect" );
 	m = int( distance( self.origin, bot.origin ) * 0.0254 );
 	an_log( "bot killed by " + self.name + " " + weapon + " " + m + "m" );
+	self thread an_xp_popup_check();
 	if ( self.pers["an_afh"] == "stance" )
 		self thread an_afterhit_prone( false );
 	else if ( self.pers["an_afh"] == "instant" )
@@ -749,6 +750,33 @@ an_afterhit_prone( instant )
 		self setStance( "prone" );
 		wait 0.05;
 	}
+}
+
+// Ankh (build 21): no "+500" kill popup on the server. Stock shows it from
+// _rank::giveRankXP -> updateRankScoreHUD (S&D kill 500, headshot +500); this logs
+// every condition it depends on, 0.2 s after the kill.
+an_xp_popup_check()
+{
+	self endon( "disconnect" );
+	before = 0;
+	if ( isDefined( self.pers["summary"] ) && isDefined( self.pers["summary"]["xp"] ) )
+		before = self.pers["summary"]["xp"];
+	wait 0.2;
+	after = 0;
+	if ( isDefined( self.pers["summary"] ) && isDefined( self.pers["summary"]["xp"] ) )
+		after = self.pers["summary"]["xp"];
+	line = "xp popup " + self.name;
+	line = line + " rankEnabled " + an_bool( isDefined( level.rankEnabled ) && level.rankEnabled );
+	line = line + " online " + an_bool( level.onlineGame ) + " wager " + an_bool( level.wagerMatch ) + " hardcore " + an_bool( level.hardcoreMode );
+	line = line + " count " + level.playerCount["allies"] + "/" + level.playerCount["axis"];
+	line = line + " enableText " + an_bool( isDefined( self.enableText ) && self.enableText );
+	line = line + " hud " + an_bool( isDefined( self.hud_rankscroreupdate ) );
+	if ( isDefined( self.hud_rankscroreupdate ) )
+		line = line + " alpha " + self.hud_rankscroreupdate.alpha;
+	if ( isDefined( self.rankUpdateTotal ) )
+		line = line + " total " + self.rankUpdateTotal;
+	line = line + " xp " + before + "->" + after + " kills " + self.kills + " state " + game["state"];
+	an_log( line );
 }
 
 // ---------------------------------------------------------------- almost hits
@@ -788,8 +816,12 @@ an_almost_hit_judge( bot, impact, feet, fired )
 		return;
 	if ( !isDefined( bot ) || !isAlive( bot ) )
 		return;
-	if ( distance( impact, feet ) > 45 )
+	off = int( distance( impact, feet ) );
+	if ( off > 45 )
+	{
+		an_log( "shot miss " + self.name + " landed " + off + " units from the bot's feet" );
 		return;
+	}
 	m = int( distance( self.origin, bot.origin ) * 0.0254 );
 	self iPrintLnBold( "^7You Almost Hit! ^1[" + m + "m]" );
 	for ( i = 0; i < level.players.size; i++ )

@@ -12,6 +12,8 @@ main()
 init()
 {
 	level.an_build = an_build();
+	// read over rcon by tools/deploy_t5.sh to confirm a map reload picked up a new build
+	setdvar( "an_build", level.an_build );
 	level.an_accent = ( 0.72, 0.09, 0.11 );
 	level.an_strings = [];
 	level.an_string_count = 0;
@@ -36,7 +38,7 @@ init()
 
 an_build()
 {
-	return "20";
+	return "21";
 }
 
 an_on_connect()
@@ -1099,6 +1101,7 @@ an_page_title( page )
 	{
 		case "main": return "MAIN";
 		case "killstreaks": return "KILLSTREAKS";
+		case "perks": return "PERKS";
 		case "weapon": return "WEAPON";
 		case "drop": return "CANSWAP DROP";
 		case "movement": return "MOVEMENT";
@@ -1175,6 +1178,7 @@ an_page_rows( page )
 	else if ( page == "utilities" )
 	{
 		rows[ rows.size ] = an_row( "page", "Killstreaks", "killstreaks" );
+		rows[ rows.size ] = an_row( "page", "Perks", "perks" );
 		rows[ rows.size ] = an_row( "afh", "Afterhit Prone", "afh" );
 		rows[ rows.size ] = an_row( "ah", "Almost Hit Message", "ah" );
 		rows[ rows.size ] = an_row( "cmd", "Save Settings", "save" );
@@ -1207,6 +1211,13 @@ an_page_rows( page )
 		}
 		if ( rows.size == 0 )
 			rows[ rows.size ] = an_row( "info", "No other players here", "" );
+		rows[ rows.size ] = an_row( "back", "Back", "" );
+	}
+	else if ( page == "perks" )
+	{
+		keys = an_perk_keys();
+		for ( i = 0; i < keys.size; i++ )
+			rows[ rows.size ] = an_row( "perk", an_perk_name( keys[i] ), keys[i] );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
 	else if ( page == "killstreaks" )
@@ -1300,6 +1311,10 @@ an_row_value( r )
 			if ( self.pers["an_ah"] == "1" )
 				return "ON";
 			return "OFF";
+		case "perk":
+			if ( self.pers[ "an_" + r.arg ] == "1" )
+				return "ON";
+			return "OFF";
 		case "cycle":
 			if ( r.arg == "bot_mode" )
 			{
@@ -1368,7 +1383,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "perk" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -1445,6 +1460,7 @@ an_menu_select()
 		case "wset":
 		case "afh":
 		case "ah":
+		case "perk":
 		case "sb":
 		case "drop":
 		case "mv":
@@ -1492,6 +1508,7 @@ an_do_command( cmd, arg )
 		case "wset": self an_weapon_setting_cycle( arg ); break;
 		case "afh": self an_afterhit_cycle(); break;
 		case "ah": self an_almost_hit_toggle(); break;
+		case "perk": self an_perk_toggle( arg ); break;
 		case "sb": self an_smooth_bind_cycle(); break;
 		case "save": self an_save_personal(); break;
 		case "load": self an_load_personal( false ); break;
@@ -1676,6 +1693,79 @@ an_bounce_boost_loop()
 	}
 }
 
+// Perk toggles (per player, saved with the personal settings). ON gives the perk
+// to every class, OFF takes it away even when the class has it. Specialty lists
+// from the stock perk table (statstable.csv rows 161, 163, 167).
+//   ps : Sleight of Hand Pro, default ON
+//   pc : Scout Pro, default OFF
+//   pa : Steady Aim Pro, default ON
+
+an_perk_keys()
+{
+	return strTok( "ps pc pa", " " );
+}
+
+an_perk_specialties( key )
+{
+	switch ( key )
+	{
+		case "ps": return strTok( "specialty_fastreload specialty_fastads", " " );
+		case "pc": return strTok( "specialty_holdbreath specialty_fastweaponswitch", " " );
+		case "pa": return strTok( "specialty_bulletaccuracy specialty_sprintrecovery specialty_fastmeleerecovery", " " );
+	}
+	return [];
+}
+
+an_perk_name( key )
+{
+	switch ( key )
+	{
+		case "ps": return "Sleight of Hand Pro";
+		case "pc": return "Scout Pro";
+		case "pa": return "Steady Aim Pro";
+	}
+	return key;
+}
+
+an_perks_defaults()
+{
+	if ( !isDefined( self.pers["an_ps"] ) )
+		self.pers["an_ps"] = "1";
+	if ( !isDefined( self.pers["an_pc"] ) )
+		self.pers["an_pc"] = "0";
+	if ( !isDefined( self.pers["an_pa"] ) )
+		self.pers["an_pa"] = "1";
+}
+
+// After every spawn and class change (stock giveLoadout clears perks first).
+an_perks_apply()
+{
+	if ( !isAlive( self ) )
+		return;
+	keys = an_perk_keys();
+	for ( k = 0; k < keys.size; k++ )
+	{
+		list = an_perk_specialties( keys[k] );
+		on = ( self.pers[ "an_" + keys[k] ] == "1" );
+		for ( i = 0; i < list.size; i++ )
+		{
+			if ( on )
+				self setPerk( list[i] );
+			else if ( self hasPerk( list[i] ) )
+				self unsetPerk( list[i] );
+		}
+	}
+}
+
+an_perk_toggle( key )
+{
+	if ( self.pers[ "an_" + key ] == "1" )
+		self.pers[ "an_" + key ] = "0";
+	else
+		self.pers[ "an_" + key ] = "1";
+	self an_perks_apply();
+}
+
 // Roles: owner (fixed GUID) and managers (GUIDs in scriptdata/anubis/managers.txt,
 // set by the owner in-game). Owner and managers get the host pages on a dedicated
 // server; in a private match the host has them too.
@@ -1849,9 +1939,17 @@ an_rounds_main()
 	// (_globallogic_spawn.gsc:512); the engine idle timer is g_inactivity (0 = off).
 	replaceFunc( maps\mp\gametypes\_globallogic_spawn::kickIfDontSpawn, ::an_no_afk_kick );
 	setdvar( "g_inactivity", "0" );
+	// Bot spawn freeze (server log: "potential infinite loop ... bot_give_random_perk",
+	// ~2.5 s hitch per bot spawn): stock loops with no wait until the bot can afford a
+	// perk, and online bots have no CoD points (_bot.gsc:1017/1138). The bot needs no perks.
+	replaceFunc( maps\mp\gametypes\_bot::bot_give_random_perk, ::an_bot_no_perk );
 }
 
 an_no_afk_kick()
+{
+}
+
+an_bot_no_perk( slot )
 {
 }
 
@@ -2092,12 +2190,16 @@ an_class_change_watch()
 			continue;
 		// stock already gives it in the grace period before any combat
 		if ( level.inGracePeriod && !( isDefined( self.hasDoneCombat ) && self.hasDoneCombat ) )
+		{
+			self an_perks_apply();
 			continue;
+		}
 		self maps\mp\gametypes\_class::setClass( self.pers["class"] );
 		self.tag_stowed_back = undefined;
 		self.tag_stowed_hip = undefined;
 		self maps\mp\gametypes\_class::giveLoadout( self.pers["team"], self.pers["class"] );
 		self maps\mp\gametypes\_hardpoints::giveOwnedKillstreak();
+		self an_perks_apply();
 		self thread an_record_weapon_options();
 		an_log( "class change " + self.name + " " + self.pers["class"] );
 	}
@@ -2198,7 +2300,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh ah sb", " " );
+	return strTok( "is ac ob nc fc afh ah sb ps pc pa", " " );
 }
 
 an_player_file()
@@ -2247,6 +2349,7 @@ an_load_personal( quiet )
 		}
 	}
 	self an_one_bullet_now();
+	self an_perks_apply();
 	self iPrintLn( "Saved settings loaded (" + n + ")" );
 	an_log( "load " + self.name + " " + n + " values" );
 }
@@ -2256,7 +2359,11 @@ an_valid_setting( key, v )
 	switch ( key )
 	{
 		case "afh": return v == "off" || v == "stance" || v == "instant";
-		case "ah": return v == "0" || v == "1";
+		case "ah":
+		case "ps":
+		case "pc":
+		case "pa":
+			return v == "0" || v == "1";
 		case "sb": return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	}
 	// weapon settings: "", "all" or a gun base name (letters / digits only)
@@ -2595,8 +2702,10 @@ an_vote_open()
 	self.an_sel = 0;
 	self.an_top = 0;
 	self.an_stack = [];
-	// held in place, not frozen, so the menu keys reach the server
-	self freeze_player_controls( false );
+	// held in place, not frozen, so the menu keys reach the server. Direct builtin:
+	// stock freeze_player_controls( false ) does nothing once level.gameEnded is set
+	// (_utility.gsc:2105), which left controller players frozen with a dead dpad.
+	self freezeControls( false );
 	self setMoveSpeedScale( 0 );
 	self disableWeapons();
 	self an_menu_create();
@@ -2652,6 +2761,7 @@ an_weapons_defaults()
 		self.pers["an_ah"] = "1";
 	if ( !isDefined( self.pers["an_sb"] ) )
 		self.pers["an_sb"] = "off";
+	self an_perks_defaults();
 }
 
 an_weapons_player()
@@ -2673,6 +2783,7 @@ an_weapons_player()
 an_weapons_spawned()
 {
 	self an_plugin_sync();
+	self an_perks_apply();
 	self thread an_weapon_watch();
 	self thread an_ammo_loop();
 	self thread an_record_weapon_options();

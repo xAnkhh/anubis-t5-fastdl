@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "33";
+	return "34";
 }
 
 an_on_connect()
@@ -1228,7 +1228,6 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "wset", "No Cockbacks", "nc" );
 		rows[ rows.size ] = an_row( "wset", "Force Cockbacks", "fc" );
 		rows[ rows.size ] = an_row( "wset", "One Bullet", "ob" );
-		rows[ rows.size ] = an_row( "st", "Semtex Tactical", "st" );
 		rows[ rows.size ] = an_row( "page", "Canswap Drop", "drop" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
@@ -2684,7 +2683,8 @@ an_bind_watch( name )
 	}
 }
 
-// Semtex tactical (Anubis, T6 poughpack rules). BO1's tactical button only throws a
+// Semtex tactical (Anubis, T6 poughpack rules). INACTIVE since build 33 and off the menu
+// since build 34 (Ankh: "we will revisit later"); see NOTES "Builds 30-32" / "Offhand cancel". BO1's tactical button only throws a
 // grenade whose weapon file says offhandSlot "Tactical grenade" (bg_weapons.cpp:4126);
 // stock sticky_grenade_mp is a lethal, and scripts can't change that. The mod ships
 // weapons/mp/sticky_grenade_mp (stock main/iw_00.iwd file, only offhandSlot changed to Tactical; anubis_menu.iwd) and the

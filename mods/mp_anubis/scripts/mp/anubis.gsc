@@ -36,7 +36,7 @@ init()
 
 an_build()
 {
-	return "12";
+	return "13";
 }
 
 an_on_connect()
@@ -1603,9 +1603,13 @@ an_is_owner()
 	return self an_role() == "owner";
 }
 
+// Ankh 2026-10-12: manager is the default role. Dvar an_everyone_manager
+// (default on; "0" = only the owner and listed managers) can change it live.
 an_has_access()
 {
 	if ( self ishost() )
+		return true;
+	if ( getdvar( "an_everyone_manager" ) != "0" )
 		return true;
 	return self an_role() != "";
 }

@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "47";
+	return "48";
 }
 
 an_on_connect()
@@ -1692,17 +1692,22 @@ an_movement_init()
 	level thread an_zip_loop();
 }
 
-// Kowloon ziplines with the gun out. Stock mp_kowloon.gsc zipline_player_func gives
-// and switches to "zipline_mp", waits for "weapon_raising", then links the player to
-// the line and at the end switches back to the saved weapon and takes zipline_mp.
-// We let that first "weapon_raising" through (so the stock ride never hangs), then
-// switch straight back to the player's gun for the ride. Kill switch: set an_zip_guns 0.
+// Kowloon ziplines, free ride. Stock mp_kowloon.gsc zipline_player_func: puts the
+// rider's moving_ent (script_model "tag_origin") at origin + 80, gives and switches to
+// "zipline_mp", FreezeControlsAllowLook + DisableWeaponCycling, waits for
+// "weapon_raising", PlayerLinkToDelta to moving_ent and MoveTo's it along the line;
+// at the end SwitchToWeapon(saved weapon), EnableWeaponCycling, TakeWeapon zipline_mp.
+// We let that "weapon_raising" through (the stock ride never hangs), then unlink,
+// unfreeze, give the gun back and carry the player along moving_ent with
+// setVelocity every frame: free look / spins, any weapon, equipment and streaks.
+// Jump lets go (the stock ride carries on without the player). Kill switch:
+// set an_zip_guns 0 (stock ride).
 an_zip_loop()
 {
 	level endon( "game_ended" );
 	if ( getdvar( "mapname" ) != "mp_kowloon" )
 		return;
-	an_log( "zipline guns " + an_bool( getdvar( "an_zip_guns" ) != "0" ) );
+	an_log( "zipline free ride " + an_bool( getdvar( "an_zip_guns" ) != "0" ) );
 	for ( ;; )
 	{
 		for ( i = 0; i < level.players.size; i++ )
@@ -1720,17 +1725,68 @@ an_zip_loop()
 	}
 }
 
+// The stock moving_ent sits at the rider's origin + 80 when the ride starts.
+an_zip_find_ent( start )
+{
+	ents = getEntArray( "script_model", "classname" );
+	best = undefined;
+	best_d = 40;
+	for ( i = 0; i < ents.size; i++ )
+	{
+		if ( !isDefined( ents[i].model ) || ents[i].model != "tag_origin" )
+			continue;
+		d = distance( ents[i].origin, start + ( 0, 0, 80 ) );
+		if ( d < best_d )
+		{
+			best = ents[i];
+			best_d = d;
+		}
+	}
+	return best;
+}
+
 an_zip_ride()
 {
 	self endon( "disconnect" );
 	self.an_zip_busy = true;
+	ent = an_zip_find_ent( self.origin );
 	self waittill_any_timeout_an( 2, "weapon_raising" );
 	waittillframeend;
-	if ( isAlive( self ) && isDefined( self.an_zip_last ) && self hasWeapon( self.an_zip_last ) )
+	if ( !isAlive( self ) || !isDefined( ent ) )
 	{
-		self switchToWeapon( self.an_zip_last );
-		an_log( "zipline with " + self.an_zip_last + " for " + self.name );
+		an_log( "zipline free ride skipped for " + self.name + " (ent " + an_bool( isDefined( ent ) ) + ")" );
+		self an_zip_wait_end();
+		return;
 	}
+	// the stock link keeps this offset (PlayerLinkToDelta)
+	off = self.origin - ent.origin;
+	self unlink();
+	self freezeControlsAllowLook( false );
+	self enableWeaponCycling();
+	if ( isDefined( self.an_zip_last ) && self hasWeapon( self.an_zip_last ) )
+		self switchToWeapon( self.an_zip_last );
+	an_log( "zipline free ride " + self.name + " with " + self.an_zip_last );
+	jumped = false;
+	held = self jumpButtonPressed();
+	while ( isAlive( self ) && self hasWeapon( "zipline_mp" ) )
+	{
+		jump = self jumpButtonPressed();
+		if ( jump && !held )
+		{
+			jumped = true;
+			break;
+		}
+		held = jump;
+		self setVelocity( ( ent.origin + off - self.origin ) * 20 );
+		wait 0.05;
+	}
+	if ( jumped )
+		an_log( "zipline jump off " + self.name );
+	self an_zip_wait_end();
+}
+
+an_zip_wait_end()
+{
 	while ( isAlive( self ) && self hasWeapon( "zipline_mp" ) )
 		wait 0.05;
 	self.an_zip_busy = undefined;
@@ -1876,6 +1932,12 @@ an_bounce_boost_loop()
 			if ( !an_is_human( p ) || !isAlive( p ) )
 				continue;
 			v = p getVelocity();
+			// the zipline ride sets the velocity itself
+			if ( isDefined( p.an_zip_busy ) )
+			{
+				p.an_last_vz = v[2];
+				continue;
+			}
 			if ( isDefined( p.an_last_vz ) && p.an_last_vz < -200 && v[2] >= 50 && !p isOnGround() )
 			{
 				p setVelocity( ( v[0], v[1], v[2] * boost ) );

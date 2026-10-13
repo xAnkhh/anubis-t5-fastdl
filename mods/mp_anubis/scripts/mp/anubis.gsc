@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "45";
+	return "46";
 }
 
 an_on_connect()
@@ -1688,6 +1688,38 @@ an_movement_init()
 
 	level thread an_barrier_init();
 	level thread an_bounce_boost_loop();
+	level thread an_ladder_fix_loop();
+}
+
+// Ladders: with g_playerCollision "nobody" players still overlap, and the ladder
+// check traces forward from the player; a body in front of the ladder is hit instead
+// of the ladder surface and drops the climber (T6 PM_CheckLadderMove, same engine
+// family). No contents on humans = traces ignore them. Re-applied all the time since
+// a spawn gives normal contents back. Bots keep theirs (they must be hittable).
+// Kill switch: set an_ladder_fix 0 (players keep no contents until they respawn).
+an_ladder_fix_loop()
+{
+	level endon( "game_ended" );
+	an_log( "ladder fix " + an_bool( getdvar( "an_ladder_fix" ) != "0" ) );
+	for ( ;; )
+	{
+		if ( getdvar( "an_ladder_fix" ) != "0" )
+		{
+			for ( i = 0; i < level.players.size; i++ )
+			{
+				player = level.players[i];
+				if ( !isAlive( player ) || player an_is_bot() )
+					continue;
+				player setContents( 0 );
+				if ( !isDefined( player.an_ladder_fix_logged ) )
+				{
+					player.an_ladder_fix_logged = true;
+					an_log( "ladder fix: no contents for " + player.name );
+				}
+			}
+		}
+		wait 0.05;
+	}
 }
 
 an_movement_apply()

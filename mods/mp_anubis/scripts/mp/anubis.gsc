@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "32";
+	return "33";
 }
 
 an_on_connect()
@@ -2710,8 +2710,9 @@ an_semtex_connect()
 {
 	if ( !isDefined( self.pers["an_st"] ) )
 		self.pers["an_st"] = "0";
-	if ( an_semtex_active() )
-		self setClientDvar( "weapon_load_order", "iwd" );
+	// Build 32 sent weapon_load_order "iwd" to every player here: their game then loaded
+	// all ~550 raw weapon files and failed with "Hunk_AllocLowAlign failed on 3144 bytes
+	// (total 5 MB)" (Ankh's console_mp.log). Never send it again.
 }
 
 // Right after a loadout was given (spawn, class change): anything semtex held now

@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "44";
+	return "45";
 }
 
 an_on_connect()
@@ -70,6 +70,7 @@ an_player_connected()
 	self thread an_menu_close_on_end();
 	self thread an_weapons_player();
 	self thread an_class_change_watch();
+	self thread an_late_spawn();
 	self an_bind_register();
 	self an_role_announce();
 	self thread an_autoload();
@@ -2228,6 +2229,72 @@ an_dead_event( team )
 		return;
 	}
 	[[ level.an_old_dead_event ]]( team );
+}
+
+// Players on a team with no class get their first custom class (as if picked in the
+// class menu), and anyone who hasn't spawned this round is spawned mid-round. Stock
+// maySpawn (_globallogic_spawn.gsc:55) refuses first spawns after the grace period;
+// hasSpawned = true lets it pass, wantSafeSpawn skips "press to spawn" (:783), and
+// stock spawnClient does the rest. Players who already spawned this round and died
+// wait for the next round like stock. Never spawns with class "": that froze the T6
+// server twice (stock isValidClass, _globallogic_utils.gsc:279). Kill switch:
+// set an_late_spawn 0.
+an_late_spawn()
+{
+	self endon( "disconnect" );
+	level endon( "game_ended" );
+	tries = 0;
+	no_class = 0;
+	for ( ;; )
+	{
+		wait 0.5;
+		if ( getdvar( "an_late_spawn" ) == "0" )
+			continue;
+		if ( isAlive( self ) )
+			return;
+		if ( self.hasSpawned && tries == 0 )
+			return;
+		if ( !isDefined( game["state"] ) || game["state"] != "playing" || level.gameEnded )
+			continue;
+		if ( !isDefined( self.pers["team"] ) || ( self.pers["team"] != "allies" && self.pers["team"] != "axis" ) || self.sessionteam == "spectator" )
+			continue;
+		if ( !maps\mp\gametypes\_globallogic_utils::isValidClass( self.class ) || !maps\mp\gametypes\_globallogic_utils::isValidClass( self.pers["class"] ) )
+		{
+			// a second's grace so a class picked in the menu wins
+			no_class++;
+			if ( no_class >= 2 )
+			{
+				an_log( "default class custom1 for " + self.name );
+				self maps\mp\gametypes\_globallogic_ui::menuClass( "custom1" );
+				no_class = 0;
+			}
+			continue;
+		}
+		if ( level.inPrematchPeriod || level.inGracePeriod || level.inOvertime )
+			continue;
+		if ( !isDefined( self.pers["lives"] ) || self.pers["lives"] < 1 )
+			continue;
+		if ( isDefined( self.waitingToSpawn ) && self.waitingToSpawn )
+			continue;
+		if ( tries >= 3 )
+		{
+			an_log( "late spawn gave up " + self.name + " after " + tries + " tries" );
+			return;
+		}
+		tries++;
+		an_log( "late spawn " + self.name + " try " + tries + " team " + self.pers["team"] + " class " + self.class + " lives " + self.pers["lives"] + " session " + self.sessionstate );
+		self.hasSpawned = true;
+		self.wantSafeSpawn = true;
+		// own thread: the stock wait ends on "end_respawn", which must not end this one
+		self thread maps\mp\gametypes\_globallogic_spawn::spawnClient();
+		self waittill_any_timeout_an( 3, "spawned_player" );
+		wait 0.05;
+		an_log( "late spawn result " + self.name + " alive " + an_bool( isAlive( self ) ) + " session " + self.sessionstate );
+		if ( isAlive( self ) )
+			return;
+		// the stock wait was cut off and left waitingToSpawn set: retry
+		self.waitingToSpawn = false;
+	}
 }
 
 // Any death during the grace period ends it, so eliminations end the round at once.

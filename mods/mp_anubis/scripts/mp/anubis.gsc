@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "43";
+	return "44";
 }
 
 an_on_connect()
@@ -2796,7 +2796,7 @@ an_semtex_toggle()
 	self an_semtex_apply();
 }
 
-// End-of-match map vote (Anubis): 3 random maps + Random, 15 s. Build 14 ran it in
+// End-of-match map vote (Anubis): 5 random maps + Random, 15 s (Ankh 2026-10-13: was 3). Build 14 ran it in
 // the intermission, where the scoreboard takes every key (server log: no menu keys
 // from anyone during the vote). It now runs inside the stock onRoundEndGame hook,
 // which stock endGame calls once, when the match is really over, before the outcome
@@ -2841,7 +2841,10 @@ an_vote_run()
 	level.an_vote_end = getTime() + 15000;
 	for ( i = 0; i < humans.size; i++ )
 		humans[i] thread an_vote_open();
-	an_log( "map vote " + level.an_vote_choices[0] + " " + level.an_vote_choices[1] + " " + level.an_vote_choices[2] + " random" );
+	line = "map vote";
+	for ( i = 0; i < level.an_vote_choices.size; i++ )
+		line = line + " " + level.an_vote_choices[i];
+	an_log( line );
 
 	while ( getTime() < level.an_vote_end )
 	{
@@ -2885,7 +2888,7 @@ an_vote_pick()
 		if ( maps[i] != getdvar( "mapname" ) )
 			pool[ pool.size ] = maps[i];
 	picks = [];
-	for ( n = 0; n < 3 && pool.size > 0; n++ )
+	for ( n = 0; n < 5 && pool.size > 0; n++ )
 	{
 		k = randomInt( pool.size );
 		picks[ picks.size ] = pool[k];

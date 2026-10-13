@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "29";
+	return "31";
 }
 
 an_on_connect()
@@ -1228,6 +1228,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "wset", "No Cockbacks", "nc" );
 		rows[ rows.size ] = an_row( "wset", "Force Cockbacks", "fc" );
 		rows[ rows.size ] = an_row( "wset", "One Bullet", "ob" );
+		rows[ rows.size ] = an_row( "st", "Semtex Tactical", "st" );
 		rows[ rows.size ] = an_row( "page", "Canswap Drop", "drop" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
@@ -1390,6 +1391,7 @@ an_row_value( r )
 				return "ON";
 			return "OFF";
 		case "perk":
+		case "st":
 			if ( self.pers[ "an_" + r.arg ] == "1" )
 				return "ON";
 			return "OFF";
@@ -1461,7 +1463,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "perk" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "perk" || r.kind == "st" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -1539,6 +1541,7 @@ an_menu_select()
 		case "afh":
 		case "ah":
 		case "perk":
+		case "st":
 		case "sb":
 		case "drop":
 		case "mv":
@@ -1587,6 +1590,7 @@ an_do_command( cmd, arg )
 		case "afh": self an_afterhit_cycle(); break;
 		case "ah": self an_almost_hit_toggle(); break;
 		case "perk": self an_perk_toggle( arg ); break;
+		case "st": self an_semtex_toggle(); break;
 		case "sb": self an_smooth_bind_cycle(); break;
 		case "save": self an_save_personal(); break;
 		case "load": self an_load_personal( false ); break;
@@ -2331,6 +2335,7 @@ an_class_change_watch()
 		if ( level.inGracePeriod && !( isDefined( self.hasDoneCombat ) && self.hasDoneCombat ) )
 		{
 			self an_perks_apply();
+			self an_semtex_after_loadout();
 			continue;
 		}
 		self maps\mp\gametypes\_class::setClass( self.pers["class"] );
@@ -2339,6 +2344,7 @@ an_class_change_watch()
 		self maps\mp\gametypes\_class::giveLoadout( self.pers["team"], self.pers["class"] );
 		self maps\mp\gametypes\_hardpoints::giveOwnedKillstreak();
 		self an_perks_apply();
+		self an_semtex_after_loadout();
 		self an_speed_apply();
 		self thread an_record_weapon_options();
 		an_log( "class change " + self.name + " " + self.pers["class"] );
@@ -2440,7 +2446,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh ah sb ps pc pa pl", " " );
+	return strTok( "is ac ob nc fc afh ah sb ps pc pa pl st", " " );
 }
 
 an_player_file()
@@ -2490,6 +2496,7 @@ an_load_personal( quiet )
 	}
 	self an_one_bullet_now();
 	self an_perks_apply();
+	self an_semtex_apply();
 	self iPrintLn( "Saved settings loaded (" + n + ")" );
 	an_log( "load " + self.name + " " + n + " values" );
 }
@@ -2504,6 +2511,7 @@ an_valid_setting( key, v )
 		case "pc":
 		case "pa":
 		case "pl":
+		case "st":
 			return v == "0" || v == "1";
 		case "sb": return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	}
@@ -2674,6 +2682,89 @@ an_bind_watch( name )
 				break;
 		}
 	}
+}
+
+// Semtex tactical (Anubis, T6 poughpack rules). BO1's tactical button only throws a
+// grenade whose weapon file says offhandSlot "Tactical grenade" (bg_weapons.cpp:4126);
+// stock sticky_grenade_mp is a lethal, and scripts can't change that. The mod ships
+// weapons/mp/sticky_grenade_mp with offhandSlot Tactical (anubis_menu.iwd) and the
+// server runs weapon_load_order "iwd", so that file wins over the fastfile one; every
+// player's game needs it too (sent with setClientDvar below, used from the next map).
+// - toggle "st" (Weapon page, saved, default OFF): tacticals taken, 2 semtex given;
+// - a class with semtex as its lethal: semtex goes to the tactical button and the lethal
+//   becomes a tomahawk (one weapon can only be held once), whether the toggle is on or not.
+// Never setOffhandSecondaryClass with the semtex: a frag-class weapon is a script error
+// there (g_client_script_cmd_mp.cpp PlayerCmd_setOffhandSecondaryClass).
+
+an_semtex_active()
+{
+	return getdvar( "weapon_load_order" ) == "iwd";
+}
+
+an_semtex_on()
+{
+	return isDefined( self.pers["an_st"] ) && self.pers["an_st"] == "1";
+}
+
+an_semtex_connect()
+{
+	if ( !isDefined( self.pers["an_st"] ) )
+		self.pers["an_st"] = "0";
+	if ( an_semtex_active() )
+		self setClientDvar( "weapon_load_order", "iwd" );
+}
+
+// Right after a loadout was given (spawn, class change): anything semtex held now
+// came from the class, so it is the lethal.
+an_semtex_after_loadout()
+{
+	self.an_semtex_life = false;
+	self an_semtex_apply();
+}
+
+an_semtex_apply()
+{
+	if ( !isAlive( self ) || !an_semtex_active() )
+		return;
+	if ( !isDefined( self.an_semtex_life ) )
+		self.an_semtex_life = false;
+	lethal = self hasWeapon( "sticky_grenade_mp" ) && !self.an_semtex_life;
+	if ( !lethal && !self an_semtex_on() )
+		return;
+	if ( lethal )
+	{
+		self giveWeapon( "hatchet_mp" );
+		self setWeaponAmmoClip( "hatchet_mp", 1 );
+		self switchToOffhand( "hatchet_mp" );
+	}
+	tacticals = strTok( "flash_grenade_mp concussion_grenade_mp willy_pete_mp tabun_gas_mp nightingale_mp", " " );
+	for ( i = 0; i < tacticals.size; i++ )
+		if ( self hasWeapon( tacticals[i] ) )
+			self takeWeapon( tacticals[i] );
+	if ( !self hasWeapon( "sticky_grenade_mp" ) )
+		self giveWeapon( "sticky_grenade_mp" );
+	self setWeaponAmmoClip( "sticky_grenade_mp", 2 );
+	self.an_semtex_life = true;
+	an_log( "semtex tactical " + self.name + " (lethal semtex " + an_bool( lethal ) + ")" );
+}
+
+an_semtex_toggle()
+{
+	if ( self an_semtex_on() )
+	{
+		self.pers["an_st"] = "0";
+		self iPrintLn( "Semtex Tactical OFF (your class tactical comes back next spawn)" );
+		return;
+	}
+	self.pers["an_st"] = "1";
+	if ( !an_semtex_active() )
+	{
+		self iPrintLn( "Semtex Tactical needs the server's weapon file (weapon_load_order iwd)" );
+		return;
+	}
+	if ( !isDefined( self.an_semtex_life ) )
+		self.an_semtex_life = true;
+	self an_semtex_apply();
 }
 
 // End-of-match map vote (Anubis): 3 random maps + Random, 15 s. Build 14 ran it in
@@ -2903,6 +2994,7 @@ an_weapons_defaults()
 	if ( !isDefined( self.pers["an_sb"] ) )
 		self.pers["an_sb"] = "off";
 	self an_perks_defaults();
+	self an_semtex_connect();
 }
 
 an_weapons_player()
@@ -2925,6 +3017,7 @@ an_weapons_spawned()
 {
 	self an_plugin_sync();
 	self an_perks_apply();
+	self an_semtex_after_loadout();
 	self thread an_speed_watch();
 	self thread an_weapon_watch();
 	self thread an_ammo_loop();

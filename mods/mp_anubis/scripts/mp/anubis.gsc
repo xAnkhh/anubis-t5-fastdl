@@ -38,7 +38,7 @@ init()
 
 an_build()
 {
-	return "48";
+	return "52";
 }
 
 an_on_connect()
@@ -726,6 +726,14 @@ an_player_damage( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapo
 			self thread an_restore_health();
 		}
 	}
+	else if ( !an_is_map_death( sMeansOfDeath, sWeapon ) )
+	{
+		// Killstreaks hand in their own entity as the attacker (live log 2026-10-13:
+		// the bot killed by cobra_20mm_comlink_mp, attack helicopter, with no "bot hit"
+		// line), so they skipped the rules above. The bot only takes map deaths there.
+		an_log( "bot damage ignored " + sWeapon + " " + sMeansOfDeath );
+		return;
+	}
 	self [[ level.an_old_player_damage ]]( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc, timeOffset );
 }
 
@@ -1346,6 +1354,7 @@ an_page_rows( page )
 	{
 		rows[ rows.size ] = an_row( "page", "Bot", "bot" );
 		rows[ rows.size ] = an_row( "page", "Movement", "movement" );
+		rows[ rows.size ] = an_row( "mv", "Constant UAV", "uav" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
 	else if ( page == "movement" )
@@ -1670,7 +1679,11 @@ an_movement_init()
 		setdvar( "an_mv_prone", "1" );
 		setdvar( "an_mv_use", "0" );
 		setdvar( "an_mv_barrier", "0" );
+		setdvar( "an_mv_uav", "1" );
 	}
+	// first load of a build with this setting on an already running map
+	if ( getdvar( "an_mv_uav" ) == "" )
+		setdvar( "an_mv_uav", "1" );
 	if ( getdvar( "an_bounce_boost" ) == "" )
 		setdvar( "an_bounce_boost", "1.05" );
 
@@ -1848,6 +1861,12 @@ an_movement_toggle( key )
 		setdvar( d, "1" );
 	an_movement_apply();
 	an_log( "movement " + key + " = " + getdvar( d ) );
+	// Constant UAV off: clear the sweep now (an_uav_loop stops renewing it)
+	if ( key == "uav" && getdvar( d ) == "0" )
+	{
+		maps\mp\_radar::setTeamSpyplaneWrapper( "allies", 0 );
+		maps\mp\_radar::setTeamSpyplaneWrapper( "axis", 0 );
+	}
 }
 
 an_movement_text( key )
@@ -2260,6 +2279,20 @@ an_rounds_main()
 	// ~2.5 s hitch per bot spawn): stock loops with no wait until the bot can afford a
 	// perk, and online bots have no CoD points (_bot.gsc:1017/1138). The bot needs no perks.
 	replaceFunc( maps\mp\gametypes\_bot::bot_give_random_perk, ::an_bot_no_perk );
+	// Streaks that open the map to pick a spot always cancel (Ankh 2026-10-13): no map
+	// UI, the streak is kept and the player switches back like a stock cancel
+	// (select*Location returns false when the pick is cancelled, e.g. _napalm.gsc:89).
+	replaceFunc( maps\mp\_napalm::selectNapalmLocation, ::an_streak_cancel );
+	replaceFunc( maps\mp\_airstrike::selectAirstrikeLocation, ::an_streak_cancel );
+	replaceFunc( maps\mp\_mortar::selectMortarLocation, ::an_streak_cancel );
+	replaceFunc( maps\mp\_artillery::selectArtilleryLocation, ::an_streak_cancel );
+	replaceFunc( maps\mp\_helicopter::selectHelicopterLocation, ::an_streak_cancel );
+}
+
+an_streak_cancel( hardpointType )
+{
+	an_log( "streak cancel " + self.name + " " + hardpointType );
+	return false;
 }
 
 an_no_afk_kick()
@@ -2528,7 +2561,8 @@ an_countdown_free()
 	}
 }
 
-// Always-on sweeping UAV for the team the humans are on.
+// Always-on sweeping UAV for the team the humans are on (Manager -> Constant UAV,
+// dvar an_mv_uav, default on, reset on a new map).
 an_uav_loop()
 {
 	level endon( "game_ended" );
@@ -2536,7 +2570,7 @@ an_uav_loop()
 	for ( ;; )
 	{
 		team = an_human_team();
-		if ( isDefined( team ) && !maps\mp\_radar::teamHasSatellite( team ) )
+		if ( getdvar( "an_mv_uav" ) != "0" && isDefined( team ) && !maps\mp\_radar::teamHasSatellite( team ) )
 			maps\mp\_radar::setTeamSpyplaneWrapper( team, 1 );
 		wait 5;
 	}

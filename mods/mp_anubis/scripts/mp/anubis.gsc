@@ -39,7 +39,7 @@ init()
 
 an_build()
 {
-	return "60";
+	return "61";
 }
 
 an_on_connect()
@@ -3581,19 +3581,29 @@ an_record_weapon_options()
 {
 	self endon( "disconnect" );
 	self.an_wopts = [];
+	self.an_class_guns = undefined;
 	wait 0.05;
 	if ( !isDefined( self.class ) || !isDefined( self.custom_class ) )
+	{
+		self an_sc_note( "no class / custom classes" );
 		return;
+	}
 	c = self.class;
 	if ( !isSubStr( c, "CLASS_CUSTOM" ) && !isSubStr( c, "CLASS_PRESTIGE" ) )
+	{
+		self an_sc_note( "not a custom class: " + c );
 		return;
+	}
 	n = int( c[ c.size - 1 ] ) - 1;
 	if ( n == -1 )
 		n = 9;
 	if ( isSubStr( c, "CLASS_PRESTIGE" ) )
 		n = n + 5;
 	if ( !isDefined( self.custom_class[n] ) )
+	{
+		self an_sc_note( "custom_class[" + n + "] missing for " + c );
 		return;
+	}
 	cc = self.custom_class[n];
 	if ( isDefined( cc["primary"] ) && isDefined( cc["primary_weapon_options"] ) )
 		self.an_wopts[ cc["primary"] ] = int( cc["primary_weapon_options"] );
@@ -3602,6 +3612,15 @@ an_record_weapon_options()
 	self.an_class_guns = cc;
 	if ( self.pers["an_sc"] == "1" )
 		self an_secondary_camo_apply( true );
+}
+
+// Build 61 diagnostic (build 60 live: toggled 6 times, no "secondary camo" line at all):
+// says where the camo copy stopped, only for players who have the setting on or just
+// toggled it.
+an_sc_note( why )
+{
+	if ( self.pers["an_sc"] == "1" || isDefined( self.an_sc_forced ) )
+		an_log( "secondary camo skipped " + self.name + ": " + why );
 }
 
 // Secondary Camo = Primary (Ankh 2026-10-13, like sesh's "alt swap camos"): the class
@@ -3613,13 +3632,27 @@ an_record_weapon_options()
 an_secondary_camo_apply( on )
 {
 	if ( !isDefined( self.an_class_guns ) )
+	{
+		self an_sc_note( "class guns not recorded yet" );
 		return;
+	}
 	cc = self.an_class_guns;
 	if ( !isDefined( cc["primary"] ) || !isDefined( cc["secondary"] ) || !isDefined( cc["secondary_weapon_options"] ) )
+	{
+		self an_sc_note( "class has no primary / secondary / options" );
 		return;
+	}
 	sec = cc["secondary"];
-	if ( !self hasWeapon( sec ) || !an_is_primary_class_gun( sec ) )
+	if ( !self hasWeapon( sec ) )
+	{
+		self an_sc_note( "doesn't hold " + sec );
 		return;
+	}
+	if ( !an_is_primary_class_gun( sec ) )
+	{
+		self an_sc_note( sec + " isn't a primary-class gun" );
+		return;
+	}
 	opts = int( cc["secondary_weapon_options"] );
 	if ( on && isDefined( cc["primary_weapon_options"] ) )
 	{
@@ -3627,7 +3660,10 @@ an_secondary_camo_apply( on )
 		opts = opts - ( opts % 64 ) + ( prim % 64 );
 	}
 	if ( isDefined( self.an_wopts[ sec ] ) && self.an_wopts[ sec ] == opts && !isDefined( self.an_sc_forced ) )
+	{
+		self an_sc_note( sec + " already has options " + opts );
 		return;
+	}
 	self.an_wopts[ sec ] = opts;
 	held = self getCurrentWeapon() == sec;
 	clip = self getWeaponAmmoClip( sec );
@@ -3647,11 +3683,13 @@ an_is_primary_class_gun( weapon )
 	if ( !isDefined( level.tbl_weaponIDs ) )
 		return false;
 	base = an_weapon_base( weapon );
-	for ( i = 0; i < 256; i++ )
+	keys = getArrayKeys( level.tbl_weaponIDs );
+	for ( k = 0; k < keys.size; k++ )
 	{
-		if ( !isDefined( level.tbl_weaponIDs[i] ) || level.tbl_weaponIDs[i]["reference"] != base )
+		w = level.tbl_weaponIDs[ keys[k] ];
+		if ( !isDefined( w ) || !isDefined( w["reference"] ) || !isDefined( w["group"] ) || w["reference"] != base )
 			continue;
-		g = level.tbl_weaponIDs[i]["group"];
+		g = w["group"];
 		return g == "weapon_sniper" || g == "weapon_lmg" || g == "weapon_cqb" || g == "weapon_assault" || g == "weapon_smg";
 	}
 	return false;

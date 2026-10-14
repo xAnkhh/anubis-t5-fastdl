@@ -39,7 +39,7 @@ init()
 
 an_build()
 {
-	return "62";
+	return "65";
 }
 
 an_on_connect()
@@ -98,7 +98,7 @@ an_server_dvars()
 {
 	wait 0.05;
 	an_try_set( "sv_enableBounces", "1" );
-	an_log( "plugin: weapons " + getdvar( "an_weaponsPatched" ) + ", wallbang " + getdvar( "bg_surfacePenetrationPatched" ) + " (bg_surfacePenetration " + getdvar( "bg_surfacePenetration" ) + ")" );
+	an_log( "plugin: weapons " + getdvar( "an_weaponsPatched" ) + ", wallbang " + getdvar( "bg_surfacePenetrationPatched" ) + ", ladder " + getdvar( "an_ladderFixPatched" ) + " (an_ladderFix " + getdvar( "an_ladderFix" ) + ")" + " (bg_surfacePenetration " + getdvar( "bg_surfacePenetration" ) + ")" );
 	names = strTok( "bulletrange sv_enableBounces sv_allAnglesBounces sv_terrainEdgeBounces sv_enableDoubleTaps g_playerCollision g_playerEjection jump_slowdownEnable player_sprintUnlimited bg_fallDamageMinHeight bg_ladder_yawcap bg_prone_yawcap player_useRadius penetrationCount perk_bulletPenetrationMultiplier bulletrange sv_cheats scr_allowFileIo", " " );
 	line = "dvars";
 	for ( i = 0; i < names.size; i++ )
@@ -858,6 +858,38 @@ an_on_bot_kill( bot, weapon, headshot )
 		self thread an_afterhit_prone( false );
 	else if ( self.pers["an_afh"] == "instant" )
 		self thread an_afterhit_prone( true );
+	if ( self.pers["an_afr"] != "off" )
+		self thread an_afterhit_reload( self.pers["an_afr"] );
+}
+
+// The reload animation depends on the clip when the reload starts (BO1
+// bg_weapons.cpp PM_SetReloadingState): rounds left = normal reload, empty = empty
+// mag reload.
+// empty: the clip's rounds go to the reserve and the clip is set to 0; the engine
+//   starts a reload by itself on an empty clip with reserve ammo (bg_weapons.cpp:2425).
+// normal: the server plugin presses the reload button for this player (an_rl<slot>
+//   counter); without the plugin (private match) it falls back to empty.
+an_afterhit_reload( mode )
+{
+	self endon( "disconnect" );
+	self endon( "death" );
+	waittillframeend;
+	w = self getCurrentWeapon();
+	if ( w == "none" || w == "" || !self an_is_primary( w ) )
+		return;
+	clip = self getWeaponAmmoClip( w );
+	if ( mode == "normal" && getdvar( "an_rl0" ) != "" && clip > 0 )
+	{
+		d = "an_rl" + self getEntityNumber();
+		setdvar( d, int( getdvar( d ) ) + 1 );
+		an_log( "afterhit reload normal " + self.name + " " + w + " clip " + clip );
+		return;
+	}
+	if ( clip <= 0 )
+		return;
+	self setWeaponAmmoStock( w, self getWeaponAmmoStock( w ) + clip );
+	self setWeaponAmmoClip( w, 0 );
+	an_log( "afterhit reload empty " + self.name + " " + w + " clip " + clip + " (asked " + mode + ")" );
 }
 
 // Stance changes one step per frame in the engine; "instant" crouches in the air
@@ -1084,6 +1116,16 @@ an_afterhit_cycle()
 		case "off": self.pers["an_afh"] = "stance"; break;
 		case "stance": self.pers["an_afh"] = "instant"; break;
 		default: self.pers["an_afh"] = "off"; break;
+	}
+}
+
+an_afterhit_reload_cycle()
+{
+	switch ( self.pers["an_afr"] )
+	{
+		case "off": self.pers["an_afr"] = "empty"; break;
+		case "empty": self.pers["an_afr"] = "normal"; break;
+		default: self.pers["an_afr"] = "off"; break;
 	}
 }
 
@@ -1435,6 +1477,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "page", "Killstreaks", "killstreaks" );
 		rows[ rows.size ] = an_row( "page", "Perks", "perks" );
 		rows[ rows.size ] = an_row( "afh", "Afterhit Prone", "afh" );
+		rows[ rows.size ] = an_row( "afr", "Afterhit Reload", "afr" );
 		rows[ rows.size ] = an_row( "ah", "Almost Hit Message", "ah" );
 		rows[ rows.size ] = an_row( "cmd", "Save Settings", "save" );
 		rows[ rows.size ] = an_row( "cmd", "Load Settings", "load" );
@@ -1563,6 +1606,8 @@ an_row_value( r )
 			if ( self.pers["an_sb"] == "off" )
 				return "OFF";
 			return "DPAD " + an_upper( self.pers["an_sb"] );
+		case "afr":
+			return an_upper( self.pers["an_afr"] );
 		case "ah":
 			if ( self.pers["an_ah"] == "1" )
 				return "ON";
@@ -1644,7 +1689,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -1720,6 +1765,7 @@ an_menu_select()
 		case "ks":
 		case "wset":
 		case "afh":
+		case "afr":
 		case "ah":
 		case "sc":
 		case "perk":
@@ -1770,6 +1816,7 @@ an_do_command( cmd, arg )
 		case "ks": self an_give_killstreak( arg ); break;
 		case "wset": self an_weapon_setting_cycle( arg ); break;
 		case "afh": self an_afterhit_cycle(); break;
+		case "afr": self an_afterhit_reload_cycle(); break;
 		case "ah": self an_almost_hit_toggle(); break;
 		case "sc": self an_secondary_camo_toggle(); break;
 		case "perk": self an_perk_toggle( arg ); break;
@@ -1840,7 +1887,6 @@ an_movement_init()
 
 	level thread an_barrier_init();
 	level thread an_bounce_boost_loop();
-	level thread an_ladder_fix_loop();
 	level thread an_zip_loop();
 }
 
@@ -1942,37 +1988,6 @@ an_zip_wait_end()
 	while ( isAlive( self ) && self hasWeapon( "zipline_mp" ) )
 		wait 0.05;
 	self.an_zip_busy = undefined;
-}
-
-// Ladders: with g_playerCollision "nobody" players still overlap, and the ladder
-// check traces forward from the player; a body in front of the ladder is hit instead
-// of the ladder surface and drops the climber (T6 PM_CheckLadderMove, same engine
-// family). No contents on humans = traces ignore them. Re-applied all the time since
-// a spawn gives normal contents back. Bots keep theirs (they must be hittable).
-// Kill switch: set an_ladder_fix 0 (players keep no contents until they respawn).
-an_ladder_fix_loop()
-{
-	level endon( "game_ended" );
-	an_log( "ladder fix " + an_bool( getdvar( "an_ladder_fix" ) != "0" ) );
-	for ( ;; )
-	{
-		if ( getdvar( "an_ladder_fix" ) != "0" )
-		{
-			for ( i = 0; i < level.players.size; i++ )
-			{
-				player = level.players[i];
-				if ( !isAlive( player ) || player an_is_bot() )
-					continue;
-				player setContents( 0 );
-				if ( !isDefined( player.an_ladder_fix_logged ) )
-				{
-					player.an_ladder_fix_logged = true;
-					an_log( "ladder fix: no contents for " + player.name );
-				}
-			}
-		}
-		wait 0.05;
-	}
 }
 
 an_movement_apply()
@@ -2854,7 +2869,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh ah sb ps pc pa pl st sc", " " );
+	return strTok( "is ac ob nc fc afh afr ah sb ps pc pa pl st sc", " " );
 }
 
 an_player_file()
@@ -2920,6 +2935,7 @@ an_valid_setting( key, v )
 	switch ( key )
 	{
 		case "afh": return v == "off" || v == "stance" || v == "instant";
+		case "afr": return v == "off" || v == "empty" || v == "normal";
 		case "ah":
 		case "sc":
 		case "ps":
@@ -3410,6 +3426,8 @@ an_weapons_defaults()
 			self.pers[ "an_" + keys[i] ] = "";
 	if ( !isDefined( self.pers["an_afh"] ) )
 		self.pers["an_afh"] = "off";
+	if ( !isDefined( self.pers["an_afr"] ) )
+		self.pers["an_afr"] = "off";
 	if ( !isDefined( self.pers["an_ah"] ) )
 		self.pers["an_ah"] = "1";
 	if ( !isDefined( self.pers["an_sb"] ) )
@@ -3581,55 +3599,52 @@ an_record_weapon_options()
 {
 	self endon( "disconnect" );
 	self.an_wopts = [];
-	self.an_class_guns = undefined;
 	wait 0.05;
-	if ( !isDefined( self.class ) || !isDefined( self.custom_class ) )
-	{
-		self an_sc_note( "no class / custom classes" );
+	cc = self an_held_class_guns();
+	if ( !isDefined( cc ) )
 		return;
-	}
-	c = self.class;
-	if ( !isSubStr( c, "CLASS_CUSTOM" ) && !isSubStr( c, "CLASS_PRESTIGE" ) )
-	{
-		self an_sc_note( "not a custom class: " + c );
-		return;
-	}
-	n = int( c[ c.size - 1 ] ) - 1;
-	if ( n == -1 )
-		n = 9;
-	if ( isSubStr( c, "CLASS_PRESTIGE" ) )
-		n = n + 5;
-	if ( !isDefined( self.custom_class[n] ) )
-	{
-		self an_sc_note( "custom_class[" + n + "] missing for " + c );
-		return;
-	}
-	// Build 61 live log: "doesn't hold psg1_mp" for a player holding his Custom Class 6
-	// guns (ithaca + l96a1) while self.class pointed at Custom Class 1 (self.class can
-	// change after the loadout was given). Use the class whose primary AND secondary the
-	// player holds; the class name is only the first guess.
-	if ( !self an_holds_class_guns( n ) )
-	{
-		keys = getArrayKeys( self.custom_class );
-		for ( k = 0; k < keys.size; k++ )
-		{
-			if ( self an_holds_class_guns( keys[k] ) )
-			{
-				if ( self.pers["an_sc"] == "1" )
-					an_log( "class guns " + self.name + " from custom class " + ( keys[k] + 1 ) + " (class name said " + ( n + 1 ) + ")" );
-				n = keys[k];
-				break;
-			}
-		}
-	}
-	cc = self.custom_class[n];
 	if ( isDefined( cc["primary"] ) && isDefined( cc["primary_weapon_options"] ) )
 		self.an_wopts[ cc["primary"] ] = int( cc["primary_weapon_options"] );
 	if ( isDefined( cc["secondary"] ) && isDefined( cc["secondary_weapon_options"] ) )
 		self.an_wopts[ cc["secondary"] ] = int( cc["secondary_weapon_options"] );
-	self.an_class_guns = cc;
 	if ( self.pers["an_sc"] == "1" )
 		self an_secondary_camo_apply( true );
+}
+
+// The custom class whose guns the player holds right now: the class name first
+// (self.class, stock giveLoadout's own index), else the first custom class whose primary
+// AND secondary he holds. Looked up fresh every time (build 62 live log: a copy made from
+// what was recorded at spawn pointed at Custom Class 1 while the player held his Custom
+// Class 6 guns, until he switched classes).
+an_held_class_guns()
+{
+	if ( !isDefined( self.custom_class ) )
+	{
+		self an_sc_note( "no custom classes" );
+		return undefined;
+	}
+	n = -1;
+	if ( isDefined( self.class ) && isSubStr( self.class, "CLASS_CUSTOM" ) )
+	{
+		c = self.class;
+		n = int( c[ c.size - 1 ] ) - 1;
+		if ( n == -1 )
+			n = 9;
+	}
+	if ( n >= 0 && self an_holds_class_guns( n ) )
+		return self.custom_class[n];
+	keys = getArrayKeys( self.custom_class );
+	for ( k = 0; k < keys.size; k++ )
+	{
+		if ( self an_holds_class_guns( keys[k] ) )
+		{
+			if ( self.pers["an_sc"] == "1" )
+				an_log( "class guns " + self.name + " from custom class " + ( keys[k] + 1 ) + " (class name said " + ( n + 1 ) + ")" );
+			return self.custom_class[ keys[k] ];
+		}
+	}
+	self an_sc_note( "holds no custom class's primary + secondary" );
+	return undefined;
 }
 
 an_holds_class_guns( n )
@@ -3659,23 +3674,15 @@ an_sc_note( why )
 // class's own secondary camo back.
 an_secondary_camo_apply( on )
 {
-	if ( !isDefined( self.an_class_guns ) )
-	{
-		self an_sc_note( "class guns not recorded yet" );
+	cc = self an_held_class_guns();
+	if ( !isDefined( cc ) )
 		return;
-	}
-	cc = self.an_class_guns;
 	if ( !isDefined( cc["primary"] ) || !isDefined( cc["secondary"] ) || !isDefined( cc["secondary_weapon_options"] ) )
 	{
 		self an_sc_note( "class has no primary / secondary / options" );
 		return;
 	}
 	sec = cc["secondary"];
-	if ( !self hasWeapon( sec ) )
-	{
-		self an_sc_note( "doesn't hold " + sec );
-		return;
-	}
 	if ( !an_is_primary_class_gun( sec ) )
 	{
 		self an_sc_note( sec + " isn't a primary-class gun" );
@@ -3687,6 +3694,8 @@ an_secondary_camo_apply( on )
 		prim = int( cc["primary_weapon_options"] );
 		opts = opts - ( opts % 64 ) + ( prim % 64 );
 	}
+	if ( !isDefined( self.an_wopts ) )
+		self.an_wopts = [];
 	if ( isDefined( self.an_wopts[ sec ] ) && self.an_wopts[ sec ] == opts && !isDefined( self.an_sc_forced ) )
 	{
 		self an_sc_note( sec + " already has options " + opts );

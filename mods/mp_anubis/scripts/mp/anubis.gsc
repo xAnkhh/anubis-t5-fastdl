@@ -29,6 +29,7 @@ init()
 	if ( getdvar( "g_gametype" ) == "sd" )
 		level thread an_sui_watch();
 	level thread an_on_connect();
+	level thread an_class_attach_log();
 
 	level.an_old_player_damage = level.callbackPlayerDamage;
 	level.callbackPlayerDamage = ::an_player_damage;
@@ -38,7 +39,7 @@ init()
 
 an_build()
 {
-	return "52";
+	return "60";
 }
 
 an_on_connect()
@@ -71,6 +72,7 @@ an_player_connected()
 	self thread an_weapons_player();
 	self thread an_class_change_watch();
 	self thread an_late_spawn();
+	self thread an_class_secondary_log();
 	self an_bind_register();
 	self an_role_announce();
 	self thread an_autoload();
@@ -682,6 +684,53 @@ an_raw_menus_on()
 	an_log( "ui_loadRawMenus 1 sent to " + self.name );
 }
 
+// Attachment dropdowns (front-end class menu, tools/gen_class_menu.py) write
+// secondaryattachment<point> <n>, n = the attachment's place in the gun's own list.
+// Stock getFullWeaponName turns n back into a name with GetItemAttachment(gun, n); this logs
+// that list for every gun once per server start so the menu's numbers can be checked.
+an_class_attach_log()
+{
+	if ( getdvar( "an_att_logged" ) == "1" )
+		return;
+	setdvar( "an_att_logged", "1" );
+	wait 1;
+	if ( !isDefined( level.tbl_weaponIDs ) )
+		return;
+	keys = getArrayKeys( level.tbl_weaponIDs );
+	for ( k = 0; k < keys.size; k++ )
+	{
+		i = keys[k];
+		w = level.tbl_weaponIDs[i];
+		if ( !isDefined( w["attachment"] ) || w["attachment"] == "" )
+			continue;
+		tokens = strTok( w["attachment"], " " );
+		// 0 .. size-1 stays inside the list whether or not slot 0 is "none"
+		line = "attach list " + w["reference"] + " (" + i + ") table [" + w["attachment"] + "] game";
+		for ( n = 0; n < tokens.size; n++ )
+			line = line + " " + n + "=" + getItemAttachment( i, n );
+		an_log( line );
+	}
+}
+
+// What the server builds from each custom class at the first spawn (stock cac_getdata ->
+// getFullWeaponName), e.g. psg1_acog_mp when the dropdown picked ACOG for a PSG1 secondary.
+an_class_secondary_log()
+{
+	self endon( "disconnect" );
+	self waittill( "spawned_player" );
+	if ( !isDefined( self.custom_class ) )
+		return;
+	line = "class secondaries " + self.name;
+	keys = getArrayKeys( self.custom_class );
+	for ( k = 0; k < keys.size; k++ )
+	{
+		c = self.custom_class[keys[k]];
+		if ( isDefined( c ) && isDefined( c["secondary"] ) )
+			line = line + " | " + keys[k] + " " + c["primary"] + " / " + c["secondary"];
+	}
+	an_log( line );
+}
+
 // Damage rules (Anubis, Ankh's T5 weapon list 2026-10-12):
 // - humans only die to the map (falls out of the map, death triggers, crushes);
 // - the bot never hurts anyone;
@@ -866,6 +915,89 @@ an_xp_popup_check( headshot, longshot )
 		if ( isDefined( level.medalInfo ) && isDefined( level.medalInfo["MEDAL_LONG_SHOT"] ) )
 			xp = level.medalInfo["MEDAL_LONG_SHOT"]["xp"].team;
 		self thread maps\mp\gametypes\_rank::giveRankXP( "medal", xp, true );
+	}
+}
+
+// Kill popup (Ankh 2026-10-13): only kill / headshot / long shot count, total shown at
+// most +1000 (body +500, long shot +550, headshot +1000, headshot long shot +1000).
+// Stock giveMedal (_medals.gsc:108) with one change: medals other than Long Shot still give
+// their XP and medal splash, but giveRankXP runs with enableText off, so stock skips
+// updateRankScoreHUD for them (_rank.gsc giveRankXP has no wait, the flag is back at once).
+an_give_medal( medalName, weapon )
+{
+	self endon( "disconnect" );
+	if ( !level.medalsEnabled )
+		return;
+	if ( level.wagerMatch && getDvar( "g_gametype" ) != "cp" )
+		return;
+	if ( self is_bot() )
+		return;
+	waittillframeend;
+	if ( !isDefined( level.medalInfo[medalName] ) )
+		return;
+	if ( level.teambased )
+		xp = level.medalInfo[medalName]["xp"].team;
+	else
+		xp = level.medalInfo[medalName]["xp"].player;
+	if ( !level.wagerMatch && level.onlineGame && ( !getDvarInt( "xblive_privatematch" ) || getDvarInt( "xblive_basictraining" ) ) )
+	{
+		if ( medalName == "MEDAL_LONG_SHOT" )
+		{
+			self thread maps\mp\gametypes\_rank::giveRankXP( "medal", xp );
+		}
+		else
+		{
+			text = self.enableText;
+			self.enableText = false;
+			self maps\mp\gametypes\_rank::giveRankXP( "medal", xp );
+			self.enableText = text;
+		}
+		self maps\mp\gametypes\_persistence::statAdd( "MEDALS", 1, false );
+	}
+	[[level.onMedalAwarded]]( self, medalName, xp );
+	self thread maps\mp\_properks::medalEarned( medalName, weapon );
+	if ( level.hardcoreMode == false || level.medalInfo[medalName]["hardcore"] == 1 )
+		self maps\mp\_medals::addMedalToQueue( level.medalInfo[medalName]["index"] );
+}
+
+// Stock updateRankScoreHUD (_rank.gsc:689) with the popup capped at 1000. A single amount
+// above 1000 (the end-of-match bonus) is shown in full.
+an_rank_score_hud( amount )
+{
+	self endon( "disconnect" );
+	self endon( "joined_team" );
+	self endon( "joined_spectators" );
+	if ( amount == 0 )
+		return;
+	self notify( "update_score" );
+	self endon( "update_score" );
+	self.rankUpdateTotal += amount;
+	if ( amount > 1000 )
+		self.an_xp_big = true;
+	wait 0.05;
+	if ( isDefined( self.hud_rankscroreupdate ) )
+	{
+		shown = self.rankUpdateTotal;
+		if ( shown > 1000 && !( isDefined( self.an_xp_big ) && self.an_xp_big ) )
+			shown = 1000;
+		if ( shown < 0 )
+		{
+			self.hud_rankscroreupdate.label = &"";
+			self.hud_rankscroreupdate.color = ( 0.73, 0.19, 0.19 );
+		}
+		else
+		{
+			self.hud_rankscroreupdate.label = &"MP_PLUS";
+			self.hud_rankscroreupdate.color = ( 1, 1, 0.5 );
+		}
+		self.hud_rankscroreupdate setValue( shown );
+		self.hud_rankscroreupdate.alpha = 0.85;
+		self.hud_rankscroreupdate thread maps\mp\gametypes\_hud::fontPulse( self );
+		wait 1;
+		self.hud_rankscroreupdate fadeOverTime( 0.75 );
+		self.hud_rankscroreupdate.alpha = 0;
+		self.rankUpdateTotal = 0;
+		self.an_xp_big = false;
 	}
 }
 
@@ -1272,6 +1404,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "wset", "No Cockbacks", "nc" );
 		rows[ rows.size ] = an_row( "wset", "Force Cockbacks", "fc" );
 		rows[ rows.size ] = an_row( "wset", "One Bullet", "ob" );
+		rows[ rows.size ] = an_row( "sc", "Secondary Camo = Primary", "sc" );
 		rows[ rows.size ] = an_row( "page", "Canswap Drop", "drop" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
@@ -1434,6 +1567,10 @@ an_row_value( r )
 			if ( self.pers["an_ah"] == "1" )
 				return "ON";
 			return "OFF";
+		case "sc":
+			if ( self.pers["an_sc"] == "1" )
+				return "ON";
+			return "OFF";
 		case "perk":
 		case "st":
 			if ( self.pers[ "an_" + r.arg ] == "1" )
@@ -1507,7 +1644,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "perk" || r.kind == "st" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -1584,6 +1721,7 @@ an_menu_select()
 		case "wset":
 		case "afh":
 		case "ah":
+		case "sc":
 		case "perk":
 		case "st":
 		case "sb":
@@ -1633,6 +1771,7 @@ an_do_command( cmd, arg )
 		case "wset": self an_weapon_setting_cycle( arg ); break;
 		case "afh": self an_afterhit_cycle(); break;
 		case "ah": self an_almost_hit_toggle(); break;
+		case "sc": self an_secondary_camo_toggle(); break;
 		case "perk": self an_perk_toggle( arg ); break;
 		case "st": self an_semtex_toggle(); break;
 		case "sb": self an_smooth_bind_cycle(); break;
@@ -2287,6 +2426,9 @@ an_rounds_main()
 	replaceFunc( maps\mp\_mortar::selectMortarLocation, ::an_streak_cancel );
 	replaceFunc( maps\mp\_artillery::selectArtilleryLocation, ::an_streak_cancel );
 	replaceFunc( maps\mp\_helicopter::selectHelicopterLocation, ::an_streak_cancel );
+	// Kill popup: kill / headshot / long shot only, capped at +1000 (damage.gsc).
+	replaceFunc( maps\mp\_medals::giveMedal, ::an_give_medal );
+	replaceFunc( maps\mp\gametypes\_rank::updateRankScoreHUD, ::an_rank_score_hud );
 }
 
 an_streak_cancel( hardpointType )
@@ -2712,7 +2854,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh ah sb ps pc pa pl st", " " );
+	return strTok( "is ac ob nc fc afh ah sb ps pc pa pl st sc", " " );
 }
 
 an_player_file()
@@ -2763,6 +2905,12 @@ an_load_personal( quiet )
 	self an_one_bullet_now();
 	self an_perks_apply();
 	self an_semtex_apply();
+	if ( isAlive( self ) )
+	{
+		self.an_sc_forced = true;
+		self an_secondary_camo_apply( self.pers["an_sc"] == "1" );
+		self.an_sc_forced = undefined;
+	}
 	self iPrintLn( "Saved settings loaded (" + n + ")" );
 	an_log( "load " + self.name + " " + n + " values" );
 }
@@ -2773,6 +2921,7 @@ an_valid_setting( key, v )
 	{
 		case "afh": return v == "off" || v == "stance" || v == "instant";
 		case "ah":
+		case "sc":
 		case "ps":
 		case "pc":
 		case "pa":
@@ -3265,6 +3414,9 @@ an_weapons_defaults()
 		self.pers["an_ah"] = "1";
 	if ( !isDefined( self.pers["an_sb"] ) )
 		self.pers["an_sb"] = "off";
+	// Secondary Camo = Primary (sesh "alt swap camos" idea), off by default
+	if ( !isDefined( self.pers["an_sc"] ) )
+		self.pers["an_sc"] = "0";
 	self an_perks_defaults();
 	self an_semtex_connect();
 }
@@ -3447,6 +3599,76 @@ an_record_weapon_options()
 		self.an_wopts[ cc["primary"] ] = int( cc["primary_weapon_options"] );
 	if ( isDefined( cc["secondary"] ) && isDefined( cc["secondary_weapon_options"] ) )
 		self.an_wopts[ cc["secondary"] ] = int( cc["secondary_weapon_options"] );
+	self.an_class_guns = cc;
+	if ( self.pers["an_sc"] == "1" )
+		self an_secondary_camo_apply( true );
+}
+
+// Secondary Camo = Primary (Ankh 2026-10-13, like sesh's "alt swap camos"): the class
+// secondary is given again with the primary's camo. Weapon options are packed by the
+// engine's calcWeaponOptions (t5mp.exe 0x829740): camo = bits 0-5, lens / reticle / tag
+// above; only the camo bits are copied. Only for primary-class guns in the secondary slot
+// (overkill setups); pistols, launchers and specials keep theirs. on = false gives the
+// class's own secondary camo back.
+an_secondary_camo_apply( on )
+{
+	if ( !isDefined( self.an_class_guns ) )
+		return;
+	cc = self.an_class_guns;
+	if ( !isDefined( cc["primary"] ) || !isDefined( cc["secondary"] ) || !isDefined( cc["secondary_weapon_options"] ) )
+		return;
+	sec = cc["secondary"];
+	if ( !self hasWeapon( sec ) || !an_is_primary_class_gun( sec ) )
+		return;
+	opts = int( cc["secondary_weapon_options"] );
+	if ( on && isDefined( cc["primary_weapon_options"] ) )
+	{
+		prim = int( cc["primary_weapon_options"] );
+		opts = opts - ( opts % 64 ) + ( prim % 64 );
+	}
+	if ( isDefined( self.an_wopts[ sec ] ) && self.an_wopts[ sec ] == opts && !isDefined( self.an_sc_forced ) )
+		return;
+	self.an_wopts[ sec ] = opts;
+	held = self getCurrentWeapon() == sec;
+	clip = self getWeaponAmmoClip( sec );
+	stock = self getWeaponAmmoStock( sec );
+	self takeWeapon( sec );
+	self giveWeapon( sec, 0, opts );
+	self setWeaponAmmoClip( sec, clip );
+	self setWeaponAmmoStock( sec, stock );
+	if ( held )
+		self switchToWeapon( sec );
+	an_log( "secondary camo " + self.name + " " + sec + " options " + opts + " camo " + ( opts % 64 ) + " on " + an_bool( on ) );
+}
+
+// statstable groups of guns that are primaries in stock Create-a-Class.
+an_is_primary_class_gun( weapon )
+{
+	if ( !isDefined( level.tbl_weaponIDs ) )
+		return false;
+	base = an_weapon_base( weapon );
+	for ( i = 0; i < 256; i++ )
+	{
+		if ( !isDefined( level.tbl_weaponIDs[i] ) || level.tbl_weaponIDs[i]["reference"] != base )
+			continue;
+		g = level.tbl_weaponIDs[i]["group"];
+		return g == "weapon_sniper" || g == "weapon_lmg" || g == "weapon_cqb" || g == "weapon_assault" || g == "weapon_smg";
+	}
+	return false;
+}
+
+an_secondary_camo_toggle()
+{
+	if ( self.pers["an_sc"] == "1" )
+		self.pers["an_sc"] = "0";
+	else
+		self.pers["an_sc"] = "1";
+	if ( isAlive( self ) )
+	{
+		self.an_sc_forced = true;
+		self an_secondary_camo_apply( self.pers["an_sc"] == "1" );
+		self.an_sc_forced = undefined;
+	}
 }
 
 an_weapon_options( weapon )

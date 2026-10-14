@@ -39,7 +39,7 @@ init()
 
 an_build()
 {
-	return "61";
+	return "62";
 }
 
 an_on_connect()
@@ -3604,6 +3604,24 @@ an_record_weapon_options()
 		self an_sc_note( "custom_class[" + n + "] missing for " + c );
 		return;
 	}
+	// Build 61 live log: "doesn't hold psg1_mp" for a player holding his Custom Class 6
+	// guns (ithaca + l96a1) while self.class pointed at Custom Class 1 (self.class can
+	// change after the loadout was given). Use the class whose primary AND secondary the
+	// player holds; the class name is only the first guess.
+	if ( !self an_holds_class_guns( n ) )
+	{
+		keys = getArrayKeys( self.custom_class );
+		for ( k = 0; k < keys.size; k++ )
+		{
+			if ( self an_holds_class_guns( keys[k] ) )
+			{
+				if ( self.pers["an_sc"] == "1" )
+					an_log( "class guns " + self.name + " from custom class " + ( keys[k] + 1 ) + " (class name said " + ( n + 1 ) + ")" );
+				n = keys[k];
+				break;
+			}
+		}
+	}
 	cc = self.custom_class[n];
 	if ( isDefined( cc["primary"] ) && isDefined( cc["primary_weapon_options"] ) )
 		self.an_wopts[ cc["primary"] ] = int( cc["primary_weapon_options"] );
@@ -3612,6 +3630,16 @@ an_record_weapon_options()
 	self.an_class_guns = cc;
 	if ( self.pers["an_sc"] == "1" )
 		self an_secondary_camo_apply( true );
+}
+
+an_holds_class_guns( n )
+{
+	if ( !isDefined( self.custom_class[n] ) )
+		return false;
+	cc = self.custom_class[n];
+	if ( !isDefined( cc["primary"] ) || !isDefined( cc["secondary"] ) )
+		return false;
+	return self hasWeapon( cc["primary"] ) && self hasWeapon( cc["secondary"] );
 }
 
 // Build 61 diagnostic (build 60 live: toggled 6 times, no "secondary camo" line at all):

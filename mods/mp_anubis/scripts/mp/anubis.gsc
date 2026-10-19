@@ -39,7 +39,7 @@ init()
 
 an_build()
 {
-	return "69";
+	return "70";
 }
 
 an_on_connect()
@@ -121,7 +121,13 @@ an_bool( b )
 an_log( text )
 {
 	logPrint( "ANUBIS;" + text + "\n" );
-	level thread an_log_file( text );
+	// The file copy opens / writes / closes a file for every line on the server
+	// thread; a dedicated server already has every line in games_mp.log. Kill switch:
+	// set an_log_file 1 (copy on the dedicated server too).
+	if ( !isDefined( level.an_log_copy ) )
+		level.an_log_copy = !an_is_dedicated() || getdvar( "an_log_file" ) == "1";
+	if ( level.an_log_copy )
+		level thread an_log_file( text );
 }
 
 // Copy of the log in scriptdata (private matches may have no games_mp.log).

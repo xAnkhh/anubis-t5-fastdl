@@ -39,7 +39,7 @@ init()
 
 an_build()
 {
-	return "65";
+	return "69";
 }
 
 an_on_connect()
@@ -846,6 +846,8 @@ an_restore_health()
 an_on_bot_kill( bot, weapon, headshot )
 {
 	self endon( "disconnect" );
+	// rounds.gsc an_on_end_game: a round the bomb ends still gets this kill's final killcam
+	level.an_bot_human_kill = getTime();
 	m = int( distance( self.origin, bot.origin ) * 0.0254 );
 	an_log( "bot killed by " + self.name + " " + weapon + " " + m + "m" );
 	// stock Long Shot medal rule (_medals.gsc:283-291): farther than the weapon's distance
@@ -2647,6 +2649,8 @@ an_on_end_game( winner )
 {
 	if ( isDefined( level.an_old_end_game ) )
 		[[ level.an_old_end_game ]]( winner );
+	if ( getdvar( "g_gametype" ) == "sd" && level.bombExploded && isDefined( level.an_bot_human_kill ) )
+		level thread an_bomb_round_killcam();
 	if ( getdvar( "g_gametype" ) != "sd" || !isDefined( winner ) || ( winner != "allies" && winner != "axis" ) )
 		return;
 	other = getOtherTeam( winner );
@@ -2660,6 +2664,26 @@ an_on_end_game( winner )
 		an_log( "round point moved from " + winner + " to " + other );
 	}
 	an_match_bonus( winner );
+}
+
+// A bot killed by a human around the bomb explosion had no final killcam: the bomb
+// ends the round through stock sd_endGame (sd.gsc:1063), which never calls
+// startLastKillcam, unlike the eliminations (sd_endGameWithKillcam). The kill is
+// recorded in level.lastKillCam by its death killcam (_killcam.gsc:204), or by
+// startFinalKillcam when it lands < 1.75 s before the round end (that one also starts
+// the killcam itself). Start it here; it plays at "play_final_killcam", after the
+// round end screen (_globallogic.gsc startNextRound -> executePostRoundEvents).
+an_bomb_round_killcam()
+{
+	for ( i = 0; i < 60 && !isDefined( level.lastKillCam ); i++ )
+		wait 0.05;
+	if ( !isDefined( level.lastKillCam ) )
+	{
+		an_log( "bomb round end: bot kill has no killcam recorded" );
+		return;
+	}
+	an_log( "bomb round end: final killcam forced (bot killed " + ( getTime() - level.an_bot_human_kill ) + " ms before), in final killcam " + an_bool( level.inFinalKillcam ) );
+	maps\mp\gametypes\_killcam::startLastKillcam();
 }
 
 an_match_bonus( winner )

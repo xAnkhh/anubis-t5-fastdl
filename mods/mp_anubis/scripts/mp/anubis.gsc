@@ -27,6 +27,7 @@ init()
 	level thread an_bot_init();
 	an_friendly_init();
 	an_lunge_init();
+	an_rapid_init();
 	an_vote_init();
 	if ( getdvar( "g_gametype" ) == "sd" )
 		level thread an_sui_watch();
@@ -41,7 +42,7 @@ init()
 
 an_build()
 {
-	return "77";
+	return "79";
 }
 
 an_on_connect()
@@ -1865,6 +1866,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "wset", "Force Cockbacks", "fc" );
 		rows[ rows.size ] = an_row( "wset", "One Bullet", "ob" );
 		rows[ rows.size ] = an_row( "sc", "Secondary Camo = Primary", "sc" );
+		rows[ rows.size ] = an_row( "rf", "Rapid Fire", "rf" );
 		rows[ rows.size ] = an_row( "page", "Canswap Drop", "drop" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
@@ -2038,6 +2040,7 @@ an_row_value( r )
 			return "OFF";
 		case "perk":
 		case "st":
+		case "rf":
 			if ( self.pers[ "an_" + r.arg ] == "1" )
 				return "ON";
 			return "OFF";
@@ -2109,7 +2112,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -2190,6 +2193,7 @@ an_menu_select()
 		case "sc":
 		case "perk":
 		case "st":
+		case "rf":
 		case "sb":
 		case "drop":
 		case "mv":
@@ -2241,6 +2245,7 @@ an_do_command( cmd, arg )
 		case "sc": self an_secondary_camo_toggle(); break;
 		case "perk": self an_perk_toggle( arg ); break;
 		case "st": self an_semtex_toggle(); break;
+		case "rf": self an_rapid_toggle(); break;
 		case "sb": self an_smooth_bind_cycle(); break;
 		case "save": self an_save_personal(); break;
 		case "load": self an_load_personal( false ); break;
@@ -2651,6 +2656,8 @@ an_perks_defaults()
 		self.pers["an_pa"] = "1";
 	if ( !isDefined( self.pers["an_pl"] ) )
 		self.pers["an_pl"] = "1";
+	if ( !isDefined( self.pers["an_rf"] ) )
+		self.pers["an_rf"] = "0";
 }
 
 // After every spawn and class change (stock giveLoadout clears perks first).
@@ -2673,6 +2680,7 @@ an_perks_apply()
 				self unsetPerk( list[i] );
 		}
 	}
+	self an_rapid_perks();
 }
 
 an_perk_toggle( key )
@@ -2682,6 +2690,99 @@ an_perk_toggle( key )
 	else
 		self.pers[ "an_" + key ] = "1";
 	self an_perks_apply();
+}
+
+// Rapid Fire (Ankh 2026-10-20; research in NOTES "rapid fire in the BO1 / Plutonium
+// azza-style menus"). Same trick as Redemption / Revolt / Veruca: Sleight of Hand's fast
+// reload + perk_weapReloadMultiplier 0.001, and the player HOLDS reload + fire, so every
+// shot is followed by an instant reload and the gun fires again almost at once.
+// The dvar is one value for the whole server and the player's game predicts with its own
+// copy (bg_weapons.cpp:2699, reload states with perk bit fastreload), so it is set on the
+// server and sent to every human. While anyone has Rapid Fire on, only Rapid Fire
+// players keep specialty_fastreload (Sleight of Hand Pro gives it to everyone by default,
+// perks.gsc), so nobody else gets instant reloads. Per player, Weapon page, pers an_rf,
+// saved with the personal settings.
+
+an_rapid_init()
+{
+	level thread an_rapid_watch();
+}
+
+an_rapid_active()
+{
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[i];
+		if ( an_is_human( p ) && isDefined( p.pers["an_rf"] ) && p.pers["an_rf"] == "1" )
+			return true;
+	}
+	return false;
+}
+
+an_rapid_value()
+{
+	if ( an_rapid_active() )
+		return "0.001";
+	return "0.5";
+}
+
+// Catches the last Rapid Fire player leaving and settings loaded at join.
+an_rapid_watch()
+{
+	level endon( "game_ended" );
+	for ( ;; )
+	{
+		wait 1;
+		// compared as numbers: the engine may print the value differently
+		d = float( getdvar( "perk_weapReloadMultiplier" ) ) - float( an_rapid_value() );
+		if ( d > 0.0001 || d < -0.0001 )
+			an_rapid_update();
+	}
+}
+
+an_rapid_update()
+{
+	v = an_rapid_value();
+	setdvar( "perk_weapReloadMultiplier", v );
+	an_log( "rapid fire: perk_weapReloadMultiplier " + v + " (server reads [" + getdvar( "perk_weapReloadMultiplier" ) + "])" );
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[i];
+		if ( !an_is_human( p ) )
+			continue;
+		p setClientDvar( "perk_weapReloadMultiplier", v );
+		p an_perks_apply();
+	}
+}
+
+// Each spawn (an_weapons_spawned).
+an_rapid_apply_player()
+{
+	self setClientDvar( "perk_weapReloadMultiplier", an_rapid_value() );
+}
+
+// From an_perks_apply, after the perk toggles.
+an_rapid_perks()
+{
+	if ( !an_rapid_active() )
+		return;
+	if ( self.pers["an_rf"] == "1" )
+		self setPerk( "specialty_fastreload" );
+	else if ( self hasPerk( "specialty_fastreload" ) )
+		self unsetPerk( "specialty_fastreload" );
+}
+
+an_rapid_toggle()
+{
+	if ( self.pers["an_rf"] == "1" )
+		self.pers["an_rf"] = "0";
+	else
+	{
+		self.pers["an_rf"] = "1";
+		self iPrintLn( "Rapid Fire: hold reload + fire" );
+	}
+	an_log( "rapid fire " + self.name + " = " + self.pers["an_rf"] );
+	an_rapid_update();
 }
 
 // Roles: owner (fixed GUID) and managers (GUIDs in scriptdata/anubis/managers.txt,
@@ -3324,7 +3425,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh afr ah sb ps pc pa pl st sc", " " );
+	return strTok( "is ac ob nc fc afh afr ah sb ps pc pa pl st sc rf", " " );
 }
 
 an_player_file()
@@ -3398,6 +3499,7 @@ an_valid_setting( key, v )
 		case "pa":
 		case "pl":
 		case "st":
+		case "rf":
 			return v == "0" || v == "1";
 		case "sb": return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	}
@@ -3919,6 +4021,7 @@ an_weapons_spawned()
 {
 	self an_plugin_sync();
 	self an_lunge_apply_player();
+	self an_rapid_apply_player();
 	self an_perks_apply();
 	self an_semtex_after_loadout();
 	self thread an_speed_watch();

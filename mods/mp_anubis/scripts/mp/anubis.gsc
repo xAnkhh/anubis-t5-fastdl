@@ -42,7 +42,7 @@ init()
 
 an_build()
 {
-	return "81";
+	return "82";
 }
 
 an_on_connect()
@@ -3779,12 +3779,14 @@ an_semtex_toggle()
 	self an_semtex_apply();
 }
 
-// Stall bind (Ankh 2026-10-20, "dive stall": freeze in place, even mid-air / mid dive,
-// press again to carry on). The cfg version people share (g_gravity 0 / g_speed 0)
-// doesn't exist in BO1 (t5mp.exe has bg_gravity, no g_gravity / g_speed) and would freeze
-// the whole server. Per player instead, the way BO1 menus do their mid-air stall (Revolt
-// _revoltBinds.gsc: script_origin + PlayerLinkToDelta): lock the player to an invisible
-// anchor where he is, release him with the velocity he had.
+// Stall bind (Ankh 2026-10-20, "dive stall"). The cfg version people share (g_gravity 0
+// + g_speed 0, toggled with a vstr bind) means: no gravity and no steering, so a player
+// in the air keeps the speed he had and glides on at the same height, still diving.
+// Those dvars don't exist in BO1 (t5mp.exe has bg_gravity, no g_gravity / g_speed) and
+// would hit the whole server. Per player instead: every server frame his vertical speed
+// is cancelled and his horizontal speed put back. Second press, landing or 10 s ends it.
+// Build 81 locked the player to an anchor (Revolt's mid-air stall): Ankh "it just freezes
+// you in place" (the link stops all movement and the dive).
 // Utilities -> Stall Bind: OFF / DPAD UP / DOWN / LEFT / RIGHT (pers an_stb, saved with the
 // personal settings); console command "stall" for any key (bind <key> stall).
 
@@ -3824,48 +3826,45 @@ an_stall_text()
 
 an_stall_toggle()
 {
-	if ( isDefined( self.an_stall_ent ) )
+	if ( isDefined( self.an_stalled ) )
 	{
-		self an_stall_release( true );
+		self an_stall_release();
 		return;
 	}
-	// the zipline ride links the player itself
-	if ( !isAlive( self ) || level.gameEnded || isDefined( self.an_zip_busy ) )
+	if ( !isAlive( self ) || level.gameEnded || isDefined( self.an_zip_busy ) || self isOnGround() )
 		return;
-	self.an_stall_vel = self getVelocity();
-	ent = spawn( "script_origin", self.origin );
-	ent.angles = self.angles;
-	self.an_stall_ent = ent;
-	self playerLinkToDelta( ent, undefined );
-	self thread an_stall_guard();
-	ent thread an_stall_ent_cleanup( self );
-	an_log( "stall " + self.name + " at " + self.origin + " speed " + int( length( self.an_stall_vel ) ) );
+	v = self getVelocity();
+	self.an_stall_vel = ( v[0], v[1], 0 );
+	self.an_stalled = true;
+	self thread an_stall_hold();
+	self thread an_stall_end_on_game();
+	self thread an_stall_end_on_death();
+	an_log( "stall " + self.name + " at " + self.origin + " speed " + int( length( self.an_stall_vel ) ) + " vz " + int( v[2] ) );
 }
 
-// keep_speed: give back the velocity from before the stall (not after death / round end).
-an_stall_release( keep_speed )
-{
-	self notify( "an_stall_release" );
-	ent = self.an_stall_ent;
-	self.an_stall_ent = undefined;
-	if ( isAlive( self ) )
-		self unlink();
-	if ( isDefined( ent ) )
-		ent delete();
-	if ( keep_speed && isAlive( self ) && isDefined( self.an_stall_vel ) )
-		self setVelocity( self.an_stall_vel );
-	an_log( "stall released " + self.name );
-}
-
-// Death and round end release the stall (each in its own thread: an endon inside a
-// called function would end the waiting thread before it cleans up).
-an_stall_guard()
+// 200 server frames = 10 s cap.
+an_stall_hold()
 {
 	self endon( "an_stall_release" );
 	self endon( "disconnect" );
-	self thread an_stall_end_on_game();
-	self waittill( "death" );
-	self an_stall_release( false );
+	self endon( "death" );
+	for ( i = 0; i < 200; i++ )
+	{
+		self setVelocity( self.an_stall_vel );
+		wait 0.05;
+		if ( self isOnGround() )
+			break;
+	}
+	self an_stall_release();
+}
+
+an_stall_release()
+{
+	if ( !isDefined( self.an_stalled ) )
+		return;
+	self.an_stalled = undefined;
+	self notify( "an_stall_release" );
+	an_log( "stall released " + self.name );
 }
 
 an_stall_end_on_game()
@@ -3873,16 +3872,16 @@ an_stall_end_on_game()
 	self endon( "an_stall_release" );
 	self endon( "disconnect" );
 	level waittill( "game_ended" );
-	self an_stall_release( false );
+	self an_stall_release();
 }
 
-// the anchor goes when its player leaves while stalled
-an_stall_ent_cleanup( owner )
+// an_stall_hold ends on death without clearing the flag: clear it here
+an_stall_end_on_death()
 {
-	self endon( "death" );
-	owner endon( "an_stall_release" );
-	owner waittill( "disconnect" );
-	self delete();
+	self endon( "an_stall_release" );
+	self endon( "disconnect" );
+	self waittill( "death" );
+	self an_stall_release();
 }
 
 // End-of-match map vote (Anubis): 5 random maps + Random, 15 s (Ankh 2026-10-13: was 3). Build 14 ran it in

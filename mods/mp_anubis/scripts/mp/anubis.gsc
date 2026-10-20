@@ -42,7 +42,7 @@ init()
 
 an_build()
 {
-	return "79";
+	return "81";
 }
 
 an_on_connect()
@@ -69,6 +69,7 @@ an_player_connected()
 	self an_menu_register_commands();
 	self thread an_menu_input();
 	self thread an_smooth_bind_watch();
+	self thread an_stall_watch();
 	self thread an_team_on_connect();
 	self thread an_menu_close_on_death();
 	self thread an_menu_close_on_end();
@@ -1491,7 +1492,9 @@ an_friendly_set_team( team )
 
 // Knife lunge (Ankh 2026-10-19: IW4x perk_extendedMeleeRange 9999 style; research in NOTES
 // "knife lunge / IW4x perk_extendedMeleeRange"). Manager -> Knife Lunge, host dvar an_lunge:
-//   off    - stock;
+//   off    - stock: a lunge only starts at a target 64-90 units away with a gun out
+//            (player_meleeRange 64 < distance <= aim_automelee_range 90; a gun's own
+//            meleeChargeRange is 0, so the dvar is used; the knife's weapon file has 128);
 //   far    - lunge at a target up to 255 units away: aim_automelee_range 255 on the player's
 //            game (registered max 255; the lunge distance is one byte in the usercmd, so no
 //            further is possible; stock default 90);
@@ -1505,8 +1508,14 @@ an_friendly_set_team( team )
 
 an_lunge_init()
 {
-	if ( getdvar( "an_lunge" ) == "" )
-		setdvar( "an_lunge", "off" );
+	// FAR by default (Ankh 2026-10-20 "knife lunges still dont work": the toggle was never
+	// switched on, and stock only lunges at a target 64-90 units away). One-time switch
+	// for servers that already stored "off" (an_lunge_v).
+	if ( getdvar( "an_lunge" ) == "" || getdvar( "an_lunge_v" ) != "2" )
+	{
+		setdvar( "an_lunge", "far" );
+		setdvar( "an_lunge_v", "2" );
+	}
 	an_lunge_apply_server();
 }
 
@@ -1898,6 +1907,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "page", "Perks", "perks" );
 		rows[ rows.size ] = an_row( "afh", "Afterhit Prone", "afh" );
 		rows[ rows.size ] = an_row( "afr", "Afterhit Reload", "afr" );
+		rows[ rows.size ] = an_row( "stb", "Stall Bind", "stb" );
 		rows[ rows.size ] = an_row( "ah", "Almost Hit Message", "ah" );
 		rows[ rows.size ] = an_row( "cmd", "Save Settings", "save" );
 		rows[ rows.size ] = an_row( "cmd", "Load Settings", "load" );
@@ -1909,6 +1919,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "bindinfo", "Give All Killstreaks", "killstreaks" );
 		rows[ rows.size ] = an_row( "sb", "Smooth Action Bind", "sb" );
 		rows[ rows.size ] = an_row( "bindinfo", "Smooth Action", "smooth" );
+		rows[ rows.size ] = an_row( "bindinfo", "Stall / Unstall", "stall" );
 		if ( self an_has_access() )
 		{
 			rows[ rows.size ] = an_row( "bindinfo", "Spawn Bot", "spawnbot" );
@@ -2024,6 +2035,8 @@ an_row_value( r )
 			if ( an_is_manager_guid( r.arg ) )
 				return "MANAGER";
 			return "OFF";
+		case "stb":
+			return self an_stall_text();
 		case "sb":
 			if ( self.pers["an_sb"] == "off" )
 				return "OFF";
@@ -2112,7 +2125,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -2194,6 +2207,7 @@ an_menu_select()
 		case "perk":
 		case "st":
 		case "rf":
+		case "stb":
 		case "sb":
 		case "drop":
 		case "mv":
@@ -2247,6 +2261,7 @@ an_do_command( cmd, arg )
 		case "st": self an_semtex_toggle(); break;
 		case "rf": self an_rapid_toggle(); break;
 		case "sb": self an_smooth_bind_cycle(); break;
+		case "stb": self an_stall_cycle(); break;
 		case "save": self an_save_personal(); break;
 		case "load": self an_load_personal( false ); break;
 		case "bot_save": self an_save_bot(); break;
@@ -3425,7 +3440,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh afr ah sb ps pc pa pl st sc rf", " " );
+	return strTok( "is ac ob nc fc afh afr ah sb ps pc pa pl st sc rf stb", " " );
 }
 
 an_player_file()
@@ -3501,7 +3516,9 @@ an_valid_setting( key, v )
 		case "st":
 		case "rf":
 			return v == "0" || v == "1";
-		case "sb": return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
+		case "sb":
+		case "stb":
+			return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	}
 	// weapon settings: "", "all" or a gun base name (letters / digits only)
 	for ( i = 0; i < v.size; i++ )
@@ -3627,7 +3644,7 @@ an_loop_toggle()
 
 an_bind_list()
 {
-	return strTok( "menu spawnbot tpbot setupbot killstreaks smooth", " " );
+	return strTok( "menu spawnbot tpbot setupbot killstreaks smooth stall", " " );
 }
 
 an_bind_register()
@@ -3667,6 +3684,10 @@ an_bind_watch( name )
 			case "smooth":
 				if ( isAlive( self ) && !self.an_menu_open )
 					self an_smooth_action();
+				break;
+			case "stall":
+				if ( !self.an_menu_open )
+					self an_stall_toggle();
 				break;
 		}
 	}
@@ -3756,6 +3777,112 @@ an_semtex_toggle()
 	if ( !isDefined( self.an_semtex_life ) )
 		self.an_semtex_life = true;
 	self an_semtex_apply();
+}
+
+// Stall bind (Ankh 2026-10-20, "dive stall": freeze in place, even mid-air / mid dive,
+// press again to carry on). The cfg version people share (g_gravity 0 / g_speed 0)
+// doesn't exist in BO1 (t5mp.exe has bg_gravity, no g_gravity / g_speed) and would freeze
+// the whole server. Per player instead, the way BO1 menus do their mid-air stall (Revolt
+// _revoltBinds.gsc: script_origin + PlayerLinkToDelta): lock the player to an invisible
+// anchor where he is, release him with the velocity he had.
+// Utilities -> Stall Bind: OFF / DPAD UP / DOWN / LEFT / RIGHT (pers an_stb, saved with the
+// personal settings); console command "stall" for any key (bind <key> stall).
+
+an_stall_watch()
+{
+	self endon( "disconnect" );
+	if ( !isDefined( self.pers["an_stb"] ) )
+		self.pers["an_stb"] = "off";
+	for ( ;; )
+	{
+		cmd = self waittill_any_return( "an_up", "an_down", "an_dpad_left", "an_dpad_right" );
+		b = self.pers["an_stb"];
+		if ( b == "off" || self.an_menu_open )
+			continue;
+		// dpad up + aim opens the menu
+		if ( ( b == "up" && cmd == "an_up" && !self adsButtonPressed() ) || ( b == "down" && cmd == "an_down" ) || ( b == "left" && cmd == "an_dpad_left" ) || ( b == "right" && cmd == "an_dpad_right" ) )
+			self an_stall_toggle();
+	}
+}
+
+an_stall_cycle()
+{
+	list = strTok( "off up down left right", " " );
+	next = list[0];
+	for ( i = 0; i < list.size; i++ )
+		if ( list[i] == self.pers["an_stb"] && i + 1 < list.size )
+			next = list[ i + 1 ];
+	self.pers["an_stb"] = next;
+}
+
+an_stall_text()
+{
+	if ( !isDefined( self.pers["an_stb"] ) || self.pers["an_stb"] == "off" )
+		return "OFF";
+	return "DPAD " + an_upper( self.pers["an_stb"] );
+}
+
+an_stall_toggle()
+{
+	if ( isDefined( self.an_stall_ent ) )
+	{
+		self an_stall_release( true );
+		return;
+	}
+	// the zipline ride links the player itself
+	if ( !isAlive( self ) || level.gameEnded || isDefined( self.an_zip_busy ) )
+		return;
+	self.an_stall_vel = self getVelocity();
+	ent = spawn( "script_origin", self.origin );
+	ent.angles = self.angles;
+	self.an_stall_ent = ent;
+	self playerLinkToDelta( ent, undefined );
+	self thread an_stall_guard();
+	ent thread an_stall_ent_cleanup( self );
+	an_log( "stall " + self.name + " at " + self.origin + " speed " + int( length( self.an_stall_vel ) ) );
+}
+
+// keep_speed: give back the velocity from before the stall (not after death / round end).
+an_stall_release( keep_speed )
+{
+	self notify( "an_stall_release" );
+	ent = self.an_stall_ent;
+	self.an_stall_ent = undefined;
+	if ( isAlive( self ) )
+		self unlink();
+	if ( isDefined( ent ) )
+		ent delete();
+	if ( keep_speed && isAlive( self ) && isDefined( self.an_stall_vel ) )
+		self setVelocity( self.an_stall_vel );
+	an_log( "stall released " + self.name );
+}
+
+// Death and round end release the stall (each in its own thread: an endon inside a
+// called function would end the waiting thread before it cleans up).
+an_stall_guard()
+{
+	self endon( "an_stall_release" );
+	self endon( "disconnect" );
+	self thread an_stall_end_on_game();
+	self waittill( "death" );
+	self an_stall_release( false );
+}
+
+an_stall_end_on_game()
+{
+	self endon( "an_stall_release" );
+	self endon( "disconnect" );
+	level waittill( "game_ended" );
+	self an_stall_release( false );
+}
+
+// the anchor goes when its player leaves while stalled
+an_stall_ent_cleanup( owner )
+{
+	self endon( "death" );
+	owner endon( "an_stall_release" );
+	owner waittill( "disconnect" );
+	self delete();
 }
 
 // End-of-match map vote (Anubis): 5 random maps + Random, 15 s (Ankh 2026-10-13: was 3). Build 14 ran it in

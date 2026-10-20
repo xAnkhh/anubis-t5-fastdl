@@ -25,6 +25,7 @@ init()
 	an_roles_init();
 	level thread an_server_dvars();
 	level thread an_bot_init();
+	an_friendly_init();
 	an_vote_init();
 	if ( getdvar( "g_gametype" ) == "sd" )
 		level thread an_sui_watch();
@@ -39,7 +40,7 @@ init()
 
 an_build()
 {
-	return "70";
+	return "75";
 }
 
 an_on_connect()
@@ -316,7 +317,9 @@ an_bot_init()
 		setdvar( "an_bot_pos", "" );
 		setdvar( "an_bot_yaw", "" );
 		setdvar( "an_sui_pos", "" );
-		setdvar( "an_loop", "0" );
+		// an_loop is NOT reset here: a loop kept on through a Maps-page change loops the
+		// new map (Ankh 2026-10-19 "restart loop isnt working": live log 330:35, loop on
+		// mp_cosmodrome, "cmd map mp_crisis" reset it and crisis ended with a vote)
 		setdvar( "an_bot_wanted", "1" );
 		an_log( "new map " + map + ": bot settings back to defaults" );
 	}
@@ -347,7 +350,7 @@ an_bot_get()
 		return level.an_bot;
 	for ( i = 0; i < level.players.size; i++ )
 	{
-		if ( level.players[i] an_is_bot() )
+		if ( level.players[i] an_is_bot() && !level.players[i] an_is_friendly_bot() )
 		{
 			level.an_bot = level.players[i];
 			return level.an_bot;
@@ -408,6 +411,14 @@ an_bot_kick()
 an_bot_connected()
 {
 	self endon( "disconnect" );
+	// friendly bots (friendly.gsc); a pending add means this connect is one of them
+	if ( !self an_is_friendly_bot() && isDefined( level.an_friendly_pending ) )
+		self.pers["an_friendly"] = level.an_friendly_pending;
+	if ( self an_is_friendly_bot() )
+	{
+		self an_friendly_connected();
+		return;
+	}
 	level.an_bot = self;
 	if ( !isDefined( self.pers["team"] ) || ( self.pers["team"] != "allies" && self.pers["team"] != "axis" ) )
 	{
@@ -748,6 +759,9 @@ an_class_secondary_log()
 an_player_damage( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapon, vPoint, vDir, sHitLoc, timeOffset )
 {
 	attacker_is_player = isDefined( eAttacker ) && isPlayer( eAttacker );
+	// friendly bots (friendly.gsc) are scenery: never hurt, never counted as a bot kill
+	if ( self an_is_friendly_bot() )
+		return;
 	if ( !self an_is_bot() )
 	{
 		if ( attacker_is_player && eAttacker an_is_bot() )
@@ -1145,6 +1159,300 @@ an_almost_hit_toggle()
 		self.pers["an_ah"] = "1";
 }
 
+// Friendly bots (Ankh 2026-10-19: "friendly bots on toggle that spawn in random parts of
+// the map so it looks like theres more players"). Manager -> Friendly Bots: OFF / 2 / 4 / 6
+// (host dvar an_fb, kept across maps). They join the humans' team, stand frozen at a
+// random spawn point away from everyone, never hurt anyone and can't be hurt. Each one
+// carries a sniper and a pistol and fires one of them every few seconds (Ankh
+// 2026-10-19: "periodically shoot their pistol and their sniper").
+// Marked with pers["an_friendly"] (kept through S&D round restarts); the engine drops
+// every bot on a map change (live log 2026-10-19: "bot added ... by auto" after each new
+// map), so a friendly bot never comes back unmarked. an_bot_get() skips them, so they are
+// never "the bot".
+
+an_friendly_init()
+{
+	if ( getdvar( "an_fb" ) == "" )
+		setdvar( "an_fb", "0" );
+	level thread an_friendly_loop();
+}
+
+an_is_friendly_bot()
+{
+	return isDefined( self.pers ) && isDefined( self.pers["an_friendly"] );
+}
+
+an_friendly_list()
+{
+	list = [];
+	for ( i = 0; i < level.players.size; i++ )
+		if ( level.players[i] an_is_friendly_bot() )
+			list[ list.size ] = level.players[i];
+	return list;
+}
+
+// One bot added or kicked per pass (each add is a full client connect).
+an_friendly_loop()
+{
+	level endon( "game_ended" );
+	wait 5;
+	for ( ;; )
+	{
+		wait 2;
+		want = int( getdvar( "an_fb" ) );
+		have = an_friendly_list();
+		if ( have.size > want )
+		{
+			bot = have[ have.size - 1 ];
+			an_log( "friendly bot kicked " + bot.name + " (" + have.size + " > " + want + ")" );
+			kick( bot getEntityNumber() );
+			continue;
+		}
+		if ( have.size == want )
+			continue;
+		team = an_human_team();
+		if ( !isDefined( team ) )
+			continue;
+		// keep two slots free for people joining
+		if ( level.players.size >= int( getdvar( "sv_maxclients" ) ) - 2 )
+			continue;
+		an_friendly_add( team );
+	}
+}
+
+an_friendly_add( team )
+{
+	// an_bot_connected can run inside addTestClient (connect callback), before the mark
+	// below is set: it reads this instead
+	level.an_friendly_pending = team;
+	bot = addTestClient();
+	level.an_friendly_pending = undefined;
+	if ( !isDefined( bot ) )
+	{
+		an_log( "friendly bot add failed (server full?)" );
+		return;
+	}
+	bot.pers["isBot"] = true;
+	bot.pers["an_friendly"] = team;
+	an_log( "friendly bot added team " + team );
+}
+
+// From an_bot_connected for friendly bots (each connect, including round restarts).
+an_friendly_connected()
+{
+	self endon( "disconnect" );
+	if ( !isDefined( self.pers["team"] ) || ( self.pers["team"] != "allies" && self.pers["team"] != "axis" ) )
+		self thread maps\mp\gametypes\_bot::bot_spawn_think( self.pers["an_friendly"] );
+	self thread an_friendly_class_keep();
+	self.an_fb_placed = false;
+	for ( ;; )
+	{
+		if ( isAlive( self ) )
+		{
+			if ( !self.an_fb_placed )
+			{
+				self.an_fb_placed = true;
+				// a life that ended mid-shot left this set
+				self.an_fb_firing = false;
+				self an_friendly_place();
+				self thread an_friendly_shoot();
+			}
+			// the round start unfreezes everyone (not while a shot is being fired)
+			if ( !( isDefined( self.an_fb_firing ) && self.an_fb_firing ) )
+				self freezeControls( true );
+		}
+		else
+			self.an_fb_placed = false;
+		wait 0.5;
+	}
+}
+
+// Same reason as an_bot_class_keep (stock bot_spawn_think sends an unknown class after
+// each spawn), at a slower rate: these bots are only counted, never killed.
+an_friendly_class_keep()
+{
+	self endon( "disconnect" );
+	for ( ;; )
+	{
+		if ( !isDefined( self.class ) || self.class == "" || !isDefined( self.pers["class"] ) || self.pers["class"] == "" )
+		{
+			self.pers["class"] = level.defaultClass;
+			self.class = level.defaultClass;
+		}
+		wait 0.25;
+	}
+}
+
+// Random free-for-all spawn point (spread over the whole map), at least 500 units from
+// every other live player; any spawn point after 20 tries.
+an_friendly_place()
+{
+	spots = getEntArray( "mp_dm_spawn", "classname" );
+	if ( spots.size == 0 )
+		spots = getEntArray( "mp_tdm_spawn", "classname" );
+	if ( spots.size == 0 )
+	{
+		an_log( "friendly bot " + self.name + ": no spawn points on this map" );
+		return;
+	}
+	spot = spots[ randomInt( spots.size ) ];
+	for ( tries = 0; tries < 20; tries++ )
+	{
+		spot = spots[ randomInt( spots.size ) ];
+		if ( an_friendly_spot_free( spot.origin ) )
+			break;
+	}
+	self setOrigin( spot.origin );
+	self setPlayerAngles( spot.angles );
+	an_log( "friendly bot " + self.name + " placed at " + spot.origin + " (try " + tries + ")" );
+}
+
+an_friendly_spot_free( origin )
+{
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[i];
+		if ( p == self || !isAlive( p ) )
+			continue;
+		if ( distanceSquared( p.origin, origin ) < 500 * 500 )
+			return false;
+	}
+	return true;
+}
+
+an_friendly_cycle()
+{
+	steps = strTok( "0 2 4 6", " " );
+	v = getdvar( "an_fb" );
+	next = steps[0];
+	for ( i = 0; i < steps.size; i++ )
+		if ( steps[i] == v && i + 1 < steps.size )
+			next = steps[ i + 1 ];
+	setdvar( "an_fb", next );
+	an_log( "friendly bots = " + next );
+}
+
+an_friendly_text()
+{
+	v = getdvar( "an_fb" );
+	if ( v == "" || v == "0" )
+		return "OFF";
+	return v;
+}
+
+// One random sniper + one random pistol per life (stock statstable names; every class
+// can carry them, so they're loaded on every map). Then random player-like activity
+// (Ankh 2026-10-19: "it should be at random to simulate other players"): each bot gets
+// its own activity level per life; gaps are mostly 3-15 s, sometimes a 15-40 s quiet
+// spell, sometimes a quick follow-up; actions are a sniper shot (sometimes two), a
+// pistol burst of 1-4, looking around, a weapon swap without firing, or a stance change.
+// A frozen player can't fire: the bot is unfrozen with move speed 0 for the shots only
+// (stock bots fire with PressAttackButton, _bot.gsc:2525). Their bullets do nothing to
+// anyone (damage.gsc ignores bot attackers).
+an_friendly_shoot()
+{
+	self endon( "disconnect" );
+	self endon( "death" );
+	self notify( "an_fb_shoot" );
+	self endon( "an_fb_shoot" );
+	wait 0.2;
+	snipers = strTok( "l96a1_mp psg1_mp wa2000_mp dragunov_mp", " " );
+	pistols = strTok( "m1911_mp cz75_mp makarov_mp python_mp asp_mp", " " );
+	sniper = snipers[ randomInt( snipers.size ) ];
+	pistol = pistols[ randomInt( pistols.size ) ];
+	self takeAllWeapons();
+	self giveWeapon( sniper );
+	self giveWeapon( pistol );
+	self giveMaxAmmo( sniper );
+	self giveMaxAmmo( pistol );
+	self switchToWeapon( sniper );
+	self setMoveSpeedScale( 0 );
+	self.an_fb_yaw = self getPlayerAngles()[1];
+	// lower = busier
+	activity = randomFloatRange( 0.5, 1.6 );
+	// not all bots in step at the round start
+	wait randomFloat( 6 );
+	for ( ;; )
+	{
+		roll = randomInt( 100 );
+		if ( roll < 10 )
+			gap = randomFloatRange( 0.8, 2.5 );
+		else if ( roll < 30 )
+			gap = randomFloatRange( 15, 40 );
+		else
+			gap = randomFloatRange( 3, 15 );
+		wait gap * activity;
+		if ( level.gameEnded || ( isDefined( level.inPrematchPeriod ) && level.inPrematchPeriod ) )
+			continue;
+		roll = randomInt( 100 );
+		if ( roll < 55 )
+		{
+			shots = 1;
+			if ( randomInt( 100 ) < 20 )
+				shots = 2;
+			self an_friendly_look();
+			self an_friendly_fire( sniper, shots, 1.1, 1.6 );
+		}
+		else if ( roll < 80 )
+		{
+			self an_friendly_look();
+			self an_friendly_fire( pistol, 1 + randomInt( 4 ), 0.2, 0.6 );
+		}
+		else if ( roll < 90 )
+			self an_friendly_look();
+		else if ( roll < 95 )
+		{
+			if ( self getCurrentWeapon() == sniper )
+				self switchToWeapon( pistol );
+			else
+				self switchToWeapon( sniper );
+		}
+		else
+		{
+			stances = strTok( "stand crouch prone", " " );
+			self setStance( stances[ randomInt( stances.size ) ] );
+		}
+	}
+}
+
+// Turn: usually a drift from the last direction, sometimes anywhere.
+an_friendly_look()
+{
+	if ( randomInt( 100 ) < 30 )
+		self.an_fb_yaw = randomFloat( 360 );
+	else
+		self.an_fb_yaw = self.an_fb_yaw + randomFloatRange( -60, 60 );
+	self setPlayerAngles( ( randomFloatRange( -10, 8 ), self.an_fb_yaw, 0 ) );
+}
+
+// shots presses, min_gap..max_gap s apart (sniper: rechamber time).
+an_friendly_fire( w, shots, min_gap, max_gap )
+{
+	if ( self getCurrentWeapon() != w )
+	{
+		self switchToWeapon( w );
+		for ( i = 0; i < 40 && self getCurrentWeapon() != w; i++ )
+			wait 0.05;
+		// let the raise finish
+		wait 0.6;
+	}
+	self.an_fb_firing = true;
+	self setMoveSpeedScale( 0 );
+	self freezeControls( false );
+	wait 0.05;
+	for ( i = 0; i < shots; i++ )
+	{
+		if ( i > 0 )
+			wait randomFloatRange( min_gap, max_gap );
+		self PressAttackButton();
+	}
+	wait 0.25;
+	self freezeControls( true );
+	self.an_fb_firing = false;
+	if ( self getWeaponAmmoStock( w ) < weaponClipSize( w ) )
+		self giveMaxAmmo( w );
+}
+
 // Menu: script-drawn hud elements (T5 has no LUI; see NOTES.md section 5).
 // Layout and colours follow the approved Anubis look (spine + card, black /
 // grey / dark red), scaled to the 640x480 hud space.
@@ -1539,6 +1847,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "page", "Bot", "bot" );
 		rows[ rows.size ] = an_row( "page", "Movement", "movement" );
 		rows[ rows.size ] = an_row( "mv", "Constant UAV", "uav" );
+		rows[ rows.size ] = an_row( "mv", "Friendly Bots", "fb" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
 	else if ( page == "movement" )
@@ -1840,6 +2149,8 @@ an_do_command( cmd, arg )
 		case "mv":
 			if ( arg == "barrier" )
 				an_barrier_cycle();
+			else if ( arg == "fb" )
+				an_friendly_cycle();
 			else
 				an_movement_toggle( arg );
 			break;
@@ -2033,6 +2344,8 @@ an_movement_toggle( key )
 
 an_movement_text( key )
 {
+	if ( key == "fb" )
+		return an_friendly_text();
 	if ( key == "barrier" )
 	{
 		v = getdvar( "an_mv_barrier" );
@@ -3237,7 +3550,8 @@ an_semtex_toggle()
 // which stock endGame calls once, when the match is really over, before the outcome
 // screen and the scoreboard (_globallogic.gsc endGame). Players are unfrozen but held
 // in place (frozen players' dpad never reaches the server, build 1). Restart Loop
-// skips the vote; an empty server goes back to the first map of its rotation.
+// skips the vote (and stays on through Maps-page changes); an empty server turns the loop
+// off and goes back to the first map of its rotation.
 // Dedicated: the result goes into sv_maprotationcurrent for the stock exitLevel;
 // private match: host console "map".
 
@@ -3257,14 +3571,18 @@ an_on_round_end_game( winner )
 
 an_vote_run()
 {
-	if ( getdvar( "an_loop" ) == "1" )
+	humans = an_humans();
+	if ( getdvar( "an_loop" ) == "1" && humans.size > 0 )
 	{
 		an_next_map( getdvar( "mapname" ), "restart loop" );
 		return;
 	}
-	humans = an_humans();
 	if ( humans.size == 0 )
 	{
+		// nobody left: the loop ends with the session (it now survives map changes)
+		if ( getdvar( "an_loop" ) == "1" )
+			an_log( "restart loop off (empty server)" );
+		setdvar( "an_loop", "0" );
 		first = an_first_rotation_map();
 		if ( isDefined( first ) )
 			an_next_map( first, "empty server" );

@@ -40,7 +40,7 @@ init()
 
 an_build()
 {
-	return "75";
+	return "76";
 }
 
 an_on_connect()
@@ -1247,6 +1247,10 @@ an_friendly_connected()
 	self.an_fb_placed = false;
 	for ( ;; )
 	{
+		// stock auto-assign / CanJoinTeam put one on the enemy team (Ankh's screenshot,
+		// build 75): move it back
+		if ( isDefined( self.pers["team"] ) && ( self.pers["team"] == "allies" || self.pers["team"] == "axis" ) && self.pers["team"] != self.pers["an_friendly"] )
+			self an_friendly_set_team( self.pers["an_friendly"] );
 		if ( isAlive( self ) )
 		{
 			if ( !self.an_fb_placed )
@@ -1451,6 +1455,36 @@ an_friendly_fire( w, shots, min_gap, max_gap )
 	self.an_fb_firing = false;
 	if ( self getWeaponAmmoStock( w ) < weaponClipSize( w ) )
 		self giveMaxAmmo( w );
+}
+
+// Stock menuAllies / menuAxis (_globallogic_ui.gsc:497) without its CanJoinTeam check.
+// Build 75 live (CONFIRMED, Ankh's scoreboard + log "friendly bot added team allies" for
+// Khonsu): on connect stock auto-assign (_globallogic_player.gsc:393, ranked) balanced the
+// bot onto axis, and the later switch to allies was refused by CanJoinTeam (allies would
+// have had more players).
+an_friendly_set_team( team )
+{
+	if ( isDefined( self.pers["team"] ) && self.pers["team"] == team )
+		return;
+	an_log( "friendly bot " + self.name + " team " + self.pers["team"] + " -> " + team );
+	if ( self.sessionstate == "playing" )
+	{
+		self.switching_teams = true;
+		self.joining_team = team;
+		self.leaving_team = self.pers["team"];
+		self suicide();
+	}
+	self.pers["team"] = team;
+	self.team = team;
+	self.sessionteam = team;
+	self.pers["class"] = undefined;
+	self.class = undefined;
+	self.pers["weapon"] = undefined;
+	self.pers["savedmodel"] = undefined;
+	self notify( "joined_team" );
+	level notify( "joined_team" );
+	self notify( "end_respawn" );
+	self maps\mp\gametypes\_globallogic_ui::beginClassChoice();
 }
 
 // Menu: script-drawn hud elements (T5 has no LUI; see NOTES.md section 5).
@@ -3158,6 +3192,11 @@ an_team_join( team )
 
 an_team_pick( wanted )
 {
+	if ( self an_is_friendly_bot() )
+	{
+		self an_friendly_set_team( self.pers["an_friendly"] );
+		return;
+	}
 	if ( self an_is_bot() )
 	{
 		if ( wanted == "auto" )

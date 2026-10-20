@@ -26,6 +26,7 @@ init()
 	level thread an_server_dvars();
 	level thread an_bot_init();
 	an_friendly_init();
+	an_lunge_init();
 	an_vote_init();
 	if ( getdvar( "g_gametype" ) == "sd" )
 		level thread an_sui_watch();
@@ -40,7 +41,7 @@ init()
 
 an_build()
 {
-	return "76";
+	return "77";
 }
 
 an_on_connect()
@@ -1487,6 +1488,73 @@ an_friendly_set_team( team )
 	self maps\mp\gametypes\_globallogic_ui::beginClassChoice();
 }
 
+// Knife lunge (Ankh 2026-10-19: IW4x perk_extendedMeleeRange 9999 style; research in NOTES
+// "knife lunge / IW4x perk_extendedMeleeRange"). Manager -> Knife Lunge, host dvar an_lunge:
+//   off    - stock;
+//   far    - lunge at a target up to 255 units away: aim_automelee_range 255 on the player's
+//            game (registered max 255; the lunge distance is one byte in the usercmd, so no
+//            further is possible; stock default 90);
+//   always - every knife press from the ground lunges 250 units forward with no target:
+//            player_bayonetLaunchDebugging 1 (PM_MeleeChargeStart, bg_pmove.cpp:1497). The
+//            server runs the same movement code, so it is set on the server AND every
+//            player's game (one side only = rubber-banding).
+// Both are cheat dvars: the server's own setDvar of cheat dvars works (live dvars line:
+// jump_slowdownEnable=[0]), and setClientDvar reaches the player's game (ui_loadRawMenus,
+// classes.gsc). Knife hits on the bot still do nothing (build 15 crash fix).
+
+an_lunge_init()
+{
+	if ( getdvar( "an_lunge" ) == "" )
+		setdvar( "an_lunge", "off" );
+	an_lunge_apply_server();
+}
+
+an_lunge_apply_server()
+{
+	v = "0";
+	if ( getdvar( "an_lunge" ) == "always" )
+		v = "1";
+	setdvar( "player_bayonetLaunchDebugging", v );
+	an_log( "knife lunge " + getdvar( "an_lunge" ) + ": server player_bayonetLaunchDebugging=[" + getdvar( "player_bayonetLaunchDebugging" ) + "]" );
+}
+
+// On every human spawn and for everyone when the setting changes.
+an_lunge_apply_player()
+{
+	mode = getdvar( "an_lunge" );
+	range = "90";
+	if ( mode == "far" )
+		range = "255";
+	debug = "0";
+	if ( mode == "always" )
+		debug = "1";
+	self setClientDvar( "aim_automelee_range", range );
+	self setClientDvar( "player_bayonetLaunchDebugging", debug );
+}
+
+an_lunge_cycle()
+{
+	switch ( getdvar( "an_lunge" ) )
+	{
+		case "far": next = "always"; break;
+		case "always": next = "off"; break;
+		default: next = "far"; break;
+	}
+	setdvar( "an_lunge", next );
+	an_lunge_apply_server();
+	for ( i = 0; i < level.players.size; i++ )
+		if ( an_is_human( level.players[i] ) )
+			level.players[i] an_lunge_apply_player();
+}
+
+an_lunge_text()
+{
+	v = getdvar( "an_lunge" );
+	if ( v == "" )
+		return "OFF";
+	return an_upper( v );
+}
+
 // Menu: script-drawn hud elements (T5 has no LUI; see NOTES.md section 5).
 // Layout and colours follow the approved Anubis look (spine + card, black /
 // grey / dark red), scaled to the 640x480 hud space.
@@ -1882,6 +1950,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "page", "Movement", "movement" );
 		rows[ rows.size ] = an_row( "mv", "Constant UAV", "uav" );
 		rows[ rows.size ] = an_row( "mv", "Friendly Bots", "fb" );
+		rows[ rows.size ] = an_row( "mv", "Knife Lunge", "lunge" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
 	else if ( page == "movement" )
@@ -2185,6 +2254,8 @@ an_do_command( cmd, arg )
 				an_barrier_cycle();
 			else if ( arg == "fb" )
 				an_friendly_cycle();
+			else if ( arg == "lunge" )
+				an_lunge_cycle();
 			else
 				an_movement_toggle( arg );
 			break;
@@ -2380,6 +2451,8 @@ an_movement_text( key )
 {
 	if ( key == "fb" )
 		return an_friendly_text();
+	if ( key == "lunge" )
+		return an_lunge_text();
 	if ( key == "barrier" )
 	{
 		v = getdvar( "an_mv_barrier" );
@@ -3845,6 +3918,7 @@ an_weapons_player()
 an_weapons_spawned()
 {
 	self an_plugin_sync();
+	self an_lunge_apply_player();
 	self an_perks_apply();
 	self an_semtex_after_loadout();
 	self thread an_speed_watch();

@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "90";
+	return "91";
 }
 
 an_on_connect()
@@ -1261,7 +1261,7 @@ an_save_root()
 // Same list as tools/nbmap/maps.txt (Ankh's working maps 2026-10-23 + Nuketown).
 an_edition_maps()
 {
-	return "mp_anubis_nuked mp_anubis_cosmodrome mp_anubis_crisis mp_anubis_cairo mp_anubis_firingrange mp_anubis_duga mp_anubis_russianbase mp_anubis_villa mp_anubis_hanoi mp_anubis_radiation mp_anubis_stadium mp_anubis_hotel mp_anubis_zoo mp_anubis_silo mp_anubis_area51 mp_anubis_berlinwall2";
+	return "mp_anubis_nuked mp_anubis_cosmodrome mp_anubis_crisis mp_anubis_cairo mp_anubis_firingrange mp_anubis_duga mp_anubis_russianbase mp_anubis_villa mp_anubis_hanoi mp_anubis_radiation mp_anubis_stadium mp_anubis_hotel mp_anubis_zoo mp_anubis_silo mp_anubis_area51 mp_anubis_berlinwall2 mp_anubis_array";
 }
 
 an_edition_map_name( map )
@@ -1284,6 +1284,7 @@ an_edition_map_name( map )
 		case "mp_anubis_silo": return "Silo";
 		case "mp_anubis_area51": return "Hangar 18";
 		case "mp_anubis_berlinwall2": return "Berlin Wall";
+		case "mp_anubis_array": return "Array";
 	}
 	return map;
 }

@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "91";
+	return "92";
 }
 
 an_on_connect()
@@ -73,6 +73,7 @@ an_player_connected()
 	self thread an_smooth_bind_watch();
 	self thread an_stall_watch();
 	self thread an_dpad_bind_watch();
+	self an_killcard_watch();
 	self thread an_edition_connected();
 	self thread an_team_on_connect();
 	self thread an_menu_close_on_death();
@@ -1809,6 +1810,39 @@ an_friendly_set_team( team )
 	self maps\mp\gametypes\_globallogic_ui::beginClassChoice();
 }
 
+// Own Killcam Card (Ankh 2026-10-26): the player's own calling card in killcams of
+// himself. The stock card menu (killcamcard0, common_mp) shows each item only when
+// getlocalclientnum() == 0 && ( dvarbool( "killcam_final" ) || player( "name" ) !=
+// player( "localName" ) ): the killcam player's card is hidden when it is you, unless
+// the CLIENT dvar killcam_final is true. Nothing in PC BO1 ever sets it (Revolt sets it
+// on its listen server, where the host's game is the server). Sent per player, so it is
+// the player's real card (calling card, emblem, clan tag, rank). Utilities -> Own
+// Killcam Card ON / OFF (pers an_kc, default on, saved with the personal settings).
+
+an_killcard_watch()
+{
+	if ( !isDefined( self.pers["an_kc"] ) )
+		self.pers["an_kc"] = "1";
+	self an_killcard_apply();
+}
+
+an_killcard_apply()
+{
+	if ( self an_is_bot() )
+		return;
+	self setClientDvar( "killcam_final", self.pers["an_kc"] );
+}
+
+an_killcard_toggle()
+{
+	if ( self.pers["an_kc"] == "1" )
+		self.pers["an_kc"] = "0";
+	else
+		self.pers["an_kc"] = "1";
+	self an_killcard_apply();
+	an_log( "own killcam card " + self.name + " " + self.pers["an_kc"] );
+}
+
 // Knife lunge (Ankh 2026-10-19: IW4x perk_extendedMeleeRange 9999 style; research in NOTES
 // "knife lunge / IW4x perk_extendedMeleeRange"). Manager -> Knife Lunge, host dvar an_lunge:
 //   off    - stock: a lunge only starts at a target 64-90 units away with a gun out
@@ -2228,6 +2262,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "afr", "Afterhit Reload", "afr" );
 		rows[ rows.size ] = an_row( "stb", "Stall Bind", "stb" );
 		rows[ rows.size ] = an_row( "ah", "Almost Hit Message", "ah" );
+		rows[ rows.size ] = an_row( "kc", "Own Killcam Card", "kc" );
 		rows[ rows.size ] = an_row( "cmd", "Save Settings", "save" );
 		rows[ rows.size ] = an_row( "cmd", "Load Settings", "load" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
@@ -2369,6 +2404,10 @@ an_row_value( r )
 			if ( self.pers["an_ah"] == "1" )
 				return "ON";
 			return "OFF";
+		case "kc":
+			if ( self.pers["an_kc"] == "1" )
+				return "ON";
+			return "OFF";
 		case "sc":
 			if ( self.pers["an_sc"] == "1" )
 				return "ON";
@@ -2447,7 +2486,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" || r.kind == "dpadbind" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "kc" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" || r.kind == "dpadbind" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -2525,6 +2564,7 @@ an_menu_select()
 		case "afh":
 		case "afr":
 		case "ah":
+		case "kc":
 		case "sc":
 		case "perk":
 		case "st":
@@ -2579,6 +2619,7 @@ an_do_command( cmd, arg )
 		case "afh": self an_afterhit_cycle(); break;
 		case "afr": self an_afterhit_reload_cycle(); break;
 		case "ah": self an_almost_hit_toggle(); break;
+		case "kc": self an_killcard_toggle(); break;
 		case "sc": self an_secondary_camo_toggle(); break;
 		case "perk": self an_perk_toggle( arg ); break;
 		case "st": self an_semtex_toggle(); break;
@@ -3764,7 +3805,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	keys = strTok( "is ac ob nc fc afh afr ah sb ps pc pa pl st sc rf stb", " " );
+	keys = strTok( "is ac ob nc fc afh afr ah kc sb ps pc pa pl st sc rf stb", " " );
 	extra = an_dpad_bind_keys();
 	for ( i = 0; i < extra.size; i++ )
 		keys[ keys.size ] = extra[i];
@@ -3818,6 +3859,7 @@ an_load_personal( quiet )
 	}
 	self an_one_bullet_now();
 	self an_perks_apply();
+	self an_killcard_apply();
 	self an_semtex_apply();
 	if ( isAlive( self ) )
 	{
@@ -3836,6 +3878,7 @@ an_valid_setting( key, v )
 		case "afh": return v == "off" || v == "stance" || v == "instant";
 		case "afr": return v == "off" || v == "empty" || v == "normal";
 		case "ah":
+		case "kc":
 		case "sc":
 		case "ps":
 		case "pc":

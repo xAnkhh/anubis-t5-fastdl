@@ -7,6 +7,7 @@
 main()
 {
 	an_rounds_main();
+	an_edition_main();
 }
 
 init()
@@ -29,6 +30,7 @@ init()
 	an_lunge_init();
 	an_rapid_init();
 	an_vote_init();
+	an_edition_init();
 	if ( getdvar( "g_gametype" ) == "sd" )
 		level thread an_sui_watch();
 	level thread an_on_connect();
@@ -42,7 +44,7 @@ init()
 
 an_build()
 {
-	return "82";
+	return "92";
 }
 
 an_on_connect()
@@ -70,6 +72,9 @@ an_player_connected()
 	self thread an_menu_input();
 	self thread an_smooth_bind_watch();
 	self thread an_stall_watch();
+	self thread an_dpad_bind_watch();
+	self an_killcard_watch();
+	self thread an_edition_connected();
 	self thread an_team_on_connect();
 	self thread an_menu_close_on_death();
 	self thread an_menu_close_on_end();
@@ -137,7 +142,7 @@ an_log( text )
 // Copy of the log in scriptdata (private matches may have no games_mp.log).
 an_log_file( text )
 {
-	file = fs_fopen( "anubis/log.txt", "append" );
+	file = fs_fopen( an_save_root() + "log.txt", "append" );
 	if ( !isDefined( file ) )
 		return;
 	fs_writeline( file, getTime() + " " + text );
@@ -243,6 +248,8 @@ an_give_killstreak( type )
 
 an_map_list()
 {
+	if ( an_edition_maps() != "" )
+		return strTok( an_edition_maps(), " " );
 	return strTok( "mp_array mp_cracked mp_crisis mp_firingrange mp_duga mp_hanoi mp_cairo mp_havoc mp_cosmodrome mp_nuked mp_radiation mp_mountain mp_villa mp_russianbase mp_berlinwall2 mp_discovery mp_kowloon mp_stadium mp_gridlock mp_hotel mp_outskirts mp_zoo mp_drivein mp_area51 mp_golfcourse mp_silo", " " );
 }
 
@@ -277,7 +284,7 @@ an_map_name( map )
 		case "mp_golfcourse": return "Hazard";
 		case "mp_silo": return "Silo";
 	}
-	return map;
+	return an_edition_map_name( map );
 }
 
 an_load_map( map )
@@ -771,6 +778,8 @@ an_player_damage( eInflictor, eAttacker, iDamage, iDFlags, sMeansOfDeath, sWeapo
 			return;
 		if ( !an_is_map_death( sMeansOfDeath, sWeapon ) )
 			return;
+		if ( self an_edition_skip_damage( eInflictor, eAttacker, sMeansOfDeath ) )
+			return;
 	}
 	else if ( attacker_is_player && !eAttacker an_is_bot() )
 	{
@@ -1162,6 +1171,136 @@ an_almost_hit_toggle()
 		self.pers["an_ah"] = "1";
 }
 
+// Dpad binds for the edition's bindable commands (No Barriers: unstuck, resetspawn,
+// enemyspawn). Each one: OFF / DPAD UP / DOWN / LEFT / RIGHT, pers an_db_<name>,
+// saved with the personal settings. Dpad up only counts without aiming (aim + up opens
+// the menu); nothing fires while the menu is open.
+
+an_dpad_bind_watch()
+{
+	self endon( "disconnect" );
+	names = strTok( an_edition_binds(), " " );
+	if ( names.size == 0 )
+		return;
+	for ( i = 0; i < names.size; i++ )
+		if ( !isDefined( self.pers[ "an_db_" + names[i] ] ) )
+			self.pers[ "an_db_" + names[i] ] = "off";
+	for ( ;; )
+	{
+		cmd = self waittill_any_return( "an_up", "an_down", "an_dpad_left", "an_dpad_right" );
+		if ( self.an_menu_open )
+			continue;
+		switch ( cmd )
+		{
+			case "an_up":
+				if ( self adsButtonPressed() )
+					continue;
+				key = "up";
+				break;
+			case "an_down": key = "down"; break;
+			case "an_dpad_left": key = "left"; break;
+			default: key = "right"; break;
+		}
+		for ( i = 0; i < names.size; i++ )
+		{
+			if ( self.pers[ "an_db_" + names[i] ] == key )
+			{
+				an_log( "dpad bind " + names[i] + " by " + self.name );
+				self an_edition_bind( names[i] );
+				break;
+			}
+		}
+	}
+}
+
+an_dpad_bind_cycle( name )
+{
+	list = strTok( "off up down left right", " " );
+	cur = self.pers[ "an_db_" + name ];
+	next = list[0];
+	for ( i = 0; i < list.size; i++ )
+		if ( list[i] == cur && i + 1 < list.size )
+			next = list[ i + 1 ];
+	self.pers[ "an_db_" + name ] = next;
+}
+
+an_dpad_bind_text( name )
+{
+	v = self.pers[ "an_db_" + name ];
+	if ( !isDefined( v ) || v == "off" )
+		return "OFF";
+	return "DPAD " + an_upper( v );
+}
+
+// Personal save keys: db_<name> for each edition bind.
+an_dpad_bind_keys()
+{
+	keys = [];
+	names = strTok( an_edition_binds(), " " );
+	for ( i = 0; i < names.size; i++ )
+		keys[ keys.size ] = "db_" + names[i];
+	return keys;
+}
+
+// Edition hooks. This is the regular edition; the No Barriers edition (mod/src_nb,
+// built with tools/build.sh --nb into mod/anubis_nb) replaces this file with its own.
+
+an_edition()
+{
+	return "";
+}
+
+// Folder in scriptdata for every saved file.
+an_save_root()
+{
+	return "anubis/";
+}
+
+// Map list for the Maps page and the vote; "" = the stock list.
+an_edition_maps()
+{
+	return "";
+}
+
+an_edition_map_name( map )
+{
+	return map;
+}
+
+// Extra console commands for the Bindables page.
+an_edition_binds()
+{
+	return "";
+}
+
+an_edition_bind( name )
+{
+}
+
+an_edition_bind_rows( rows )
+{
+	return rows;
+}
+
+// main(): replaceFunc calls (before the stock scripts run)
+an_edition_main()
+{
+}
+
+an_edition_init()
+{
+}
+
+an_edition_connected()
+{
+}
+
+// true = a human ignores this map damage
+an_edition_skip_damage( eInflictor, eAttacker, mod )
+{
+	return false;
+}
+
 // Friendly bots (Ankh 2026-10-19: "friendly bots on toggle that spawn in random parts of
 // the map so it looks like theres more players"). Manager -> Friendly Bots: OFF / 2 / 4 / 6
 // (host dvar an_fb, kept across maps). They join the humans' team, stand frozen at a
@@ -1488,6 +1627,39 @@ an_friendly_set_team( team )
 	level notify( "joined_team" );
 	self notify( "end_respawn" );
 	self maps\mp\gametypes\_globallogic_ui::beginClassChoice();
+}
+
+// Own Killcam Card (Ankh 2026-10-26): the player's own calling card in killcams of
+// himself. The stock card menu (killcamcard0, common_mp) shows each item only when
+// getlocalclientnum() == 0 && ( dvarbool( "killcam_final" ) || player( "name" ) !=
+// player( "localName" ) ): the killcam player's card is hidden when it is you, unless
+// the CLIENT dvar killcam_final is true. Nothing in PC BO1 ever sets it (Revolt sets it
+// on its listen server, where the host's game is the server). Sent per player, so it is
+// the player's real card (calling card, emblem, clan tag, rank). Utilities -> Own
+// Killcam Card ON / OFF (pers an_kc, default on, saved with the personal settings).
+
+an_killcard_watch()
+{
+	if ( !isDefined( self.pers["an_kc"] ) )
+		self.pers["an_kc"] = "1";
+	self an_killcard_apply();
+}
+
+an_killcard_apply()
+{
+	if ( self an_is_bot() )
+		return;
+	self setClientDvar( "killcam_final", self.pers["an_kc"] );
+}
+
+an_killcard_toggle()
+{
+	if ( self.pers["an_kc"] == "1" )
+		self.pers["an_kc"] = "0";
+	else
+		self.pers["an_kc"] = "1";
+	self an_killcard_apply();
+	an_log( "own killcam card " + self.name + " " + self.pers["an_kc"] );
 }
 
 // Knife lunge (Ankh 2026-10-19: IW4x perk_extendedMeleeRange 9999 style; research in NOTES
@@ -1909,6 +2081,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "afr", "Afterhit Reload", "afr" );
 		rows[ rows.size ] = an_row( "stb", "Stall Bind", "stb" );
 		rows[ rows.size ] = an_row( "ah", "Almost Hit Message", "ah" );
+		rows[ rows.size ] = an_row( "kc", "Own Killcam Card", "kc" );
 		rows[ rows.size ] = an_row( "cmd", "Save Settings", "save" );
 		rows[ rows.size ] = an_row( "cmd", "Load Settings", "load" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
@@ -1926,6 +2099,7 @@ an_page_rows( page )
 			rows[ rows.size ] = an_row( "bindinfo", "Move Bot to Crosshair", "tpbot" );
 			rows[ rows.size ] = an_row( "bindinfo", "Setup / Unsetup Bot", "setupbot" );
 		}
+		rows = self an_edition_bind_rows( rows );
 		rows[ rows.size ] = an_row( "info", "In the console: bind F1 spawnbot", "" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
@@ -2037,6 +2211,8 @@ an_row_value( r )
 			return "OFF";
 		case "stb":
 			return self an_stall_text();
+		case "dpadbind":
+			return self an_dpad_bind_text( r.arg );
 		case "sb":
 			if ( self.pers["an_sb"] == "off" )
 				return "OFF";
@@ -2045,6 +2221,10 @@ an_row_value( r )
 			return an_upper( self.pers["an_afr"] );
 		case "ah":
 			if ( self.pers["an_ah"] == "1" )
+				return "ON";
+			return "OFF";
+		case "kc":
+			if ( self.pers["an_kc"] == "1" )
 				return "ON";
 			return "OFF";
 		case "sc":
@@ -2125,7 +2305,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "kc" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" || r.kind == "dpadbind" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -2203,11 +2383,13 @@ an_menu_select()
 		case "afh":
 		case "afr":
 		case "ah":
+		case "kc":
 		case "sc":
 		case "perk":
 		case "st":
 		case "rf":
 		case "stb":
+		case "dpadbind":
 		case "sb":
 		case "drop":
 		case "mv":
@@ -2256,12 +2438,14 @@ an_do_command( cmd, arg )
 		case "afh": self an_afterhit_cycle(); break;
 		case "afr": self an_afterhit_reload_cycle(); break;
 		case "ah": self an_almost_hit_toggle(); break;
+		case "kc": self an_killcard_toggle(); break;
 		case "sc": self an_secondary_camo_toggle(); break;
 		case "perk": self an_perk_toggle( arg ); break;
 		case "st": self an_semtex_toggle(); break;
 		case "rf": self an_rapid_toggle(); break;
 		case "sb": self an_smooth_bind_cycle(); break;
 		case "stb": self an_stall_cycle(); break;
+		case "dpadbind": self an_dpad_bind_cycle( arg ); break;
 		case "save": self an_save_personal(); break;
 		case "load": self an_load_personal( false ); break;
 		case "bot_save": self an_save_bot(); break;
@@ -2820,7 +3004,7 @@ an_owner_guid()
 an_roles_init()
 {
 	level.an_managers = [];
-	text = an_file_read( "anubis/managers.txt" );
+	text = an_file_read( an_save_root() + "managers.txt" );
 	if ( !isDefined( text ) )
 		return;
 	lines = strTok( text, "\n" );
@@ -2892,7 +3076,7 @@ an_manager_toggle( guid )
 	text = "";
 	for ( i = 0; i < list.size; i++ )
 		text = text + list[i] + " " + an_player_name_by_guid( list[i] ) + "\n";
-	an_file_write( "anubis/managers.txt", text );
+	an_file_write( an_save_root() + "managers.txt", text );
 	p = an_player_by_guid( guid );
 	if ( isDefined( p ) )
 	{
@@ -3440,12 +3624,16 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	return strTok( "is ac ob nc fc afh afr ah sb ps pc pa pl st sc rf stb", " " );
+	keys = strTok( "is ac ob nc fc afh afr ah kc sb ps pc pa pl st sc rf stb", " " );
+	extra = an_dpad_bind_keys();
+	for ( i = 0; i < extra.size; i++ )
+		keys[ keys.size ] = extra[i];
+	return keys;
 }
 
 an_player_file()
 {
-	return "anubis/player_" + self getguid() + ".txt";
+	return an_save_root() + "player_" + self getguid() + ".txt";
 }
 
 an_save_personal()
@@ -3490,6 +3678,7 @@ an_load_personal( quiet )
 	}
 	self an_one_bullet_now();
 	self an_perks_apply();
+	self an_killcard_apply();
 	self an_semtex_apply();
 	if ( isAlive( self ) )
 	{
@@ -3508,6 +3697,7 @@ an_valid_setting( key, v )
 		case "afh": return v == "off" || v == "stance" || v == "instant";
 		case "afr": return v == "off" || v == "empty" || v == "normal";
 		case "ah":
+		case "kc":
 		case "sc":
 		case "ps":
 		case "pc":
@@ -3520,6 +3710,10 @@ an_valid_setting( key, v )
 		case "stb":
 			return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	}
+	// dpad binds of the edition commands (dpadbind.gsc)
+	if ( key.size > 3 )
+		if ( getSubStr( key, 0, 3 ) == "db_" )
+			return v == "off" || v == "up" || v == "down" || v == "left" || v == "right";
 	// weapon settings: "", "all" or a gun base name (letters / digits only)
 	for ( i = 0; i < v.size; i++ )
 		if ( !isSubStr( "abcdefghijklmnopqrstuvwxyz0123456789", v[i] ) )
@@ -3548,7 +3742,7 @@ an_save_bot()
 	text = text + "pos_" + map + "=" + getdvar( "an_bot_pos" ) + "\n";
 	text = text + "yaw_" + map + "=" + getdvar( "an_bot_yaw" ) + "\n";
 	text = text + "sui_" + map + "=" + getdvar( "an_sui_pos" ) + "\n";
-	old = an_file_read( "anubis/bot_settings.txt" );
+	old = an_file_read( an_save_root() + "bot_settings.txt" );
 	if ( isDefined( old ) )
 	{
 		lines = strTok( old, "\n" );
@@ -3559,14 +3753,14 @@ an_save_bot()
 				text = text + lines[i] + "\n";
 		}
 	}
-	if ( an_file_write( "anubis/bot_settings.txt", text ) )
+	if ( an_file_write( an_save_root() + "bot_settings.txt", text ) )
 		self iPrintLn( "Bot settings saved" );
 	an_log( "bot save by " + self.name );
 }
 
 an_load_bot()
 {
-	text = an_file_read( "anubis/bot_settings.txt" );
+	text = an_file_read( an_save_root() + "bot_settings.txt" );
 	if ( !isDefined( text ) )
 	{
 		self iPrintLn( "No saved bot settings yet" );
@@ -3644,7 +3838,11 @@ an_loop_toggle()
 
 an_bind_list()
 {
-	return strTok( "menu spawnbot tpbot setupbot killstreaks smooth stall", " " );
+	list = strTok( "menu spawnbot tpbot setupbot killstreaks smooth stall", " " );
+	extra = strTok( an_edition_binds(), " " );
+	for ( i = 0; i < extra.size; i++ )
+		list[ list.size ] = extra[i];
+	return list;
 }
 
 an_bind_register()
@@ -3688,6 +3886,9 @@ an_bind_watch( name )
 			case "stall":
 				if ( !self.an_menu_open )
 					self an_stall_toggle();
+				break;
+			default:
+				self an_edition_bind( name );
 				break;
 		}
 	}

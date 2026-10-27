@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "97";
+	return "98";
 }
 
 an_on_connect()
@@ -4099,8 +4099,25 @@ an_divestall_start()
 	slot = self getEntityNumber();
 	setdvar( "an_ds" + slot, ( getDvarInt( "an_ds" + slot ) % 1000000 ) + 1 );
 	an_log( "dive stall started " + self.name );
+	self thread an_divestall_probe();
 	self waittill( "death" );
 	setdvar( "an_ds" + slot, "0" );
+}
+
+// Build 98 diagnostic (live 2026-10-27 "it just locks you into place"): what the server's
+// player does during the run, every 0.1 s.
+an_divestall_probe()
+{
+	self endon( "disconnect" );
+	self endon( "death" );
+	self endon( "an_divestall_start" );
+	start = getTime();
+	while ( getTime() - start < 4000 )
+	{
+		v = self getVelocity();
+		an_log( "dive probe " + ( getTime() - start ) + " ms: origin " + self.origin + " speed " + int( length( ( v[0], v[1], 0 ) ) ) + " vz " + int( v[2] ) + " stance " + self getStance() + " weapon " + self getCurrentWeapon() + " attack " + self attackButtonPressed() );
+		wait 0.1;
+	}
 }
 
 // Stops a run for the next player in this slot.

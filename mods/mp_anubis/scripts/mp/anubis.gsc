@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "92";
+	return "95";
 }
 
 an_on_connect()
@@ -2079,7 +2079,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "page", "Perks", "perks" );
 		rows[ rows.size ] = an_row( "afh", "Afterhit Prone", "afh" );
 		rows[ rows.size ] = an_row( "afr", "Afterhit Reload", "afr" );
-		rows[ rows.size ] = an_row( "stb", "Stall Bind", "stb" );
+		rows[ rows.size ] = an_row( "stb", "Dive Stall Bind", "stb" );
 		rows[ rows.size ] = an_row( "ah", "Almost Hit Message", "ah" );
 		rows[ rows.size ] = an_row( "kc", "Own Killcam Card", "kc" );
 		rows[ rows.size ] = an_row( "cmd", "Save Settings", "save" );
@@ -2092,7 +2092,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "bindinfo", "Give All Killstreaks", "killstreaks" );
 		rows[ rows.size ] = an_row( "sb", "Smooth Action Bind", "sb" );
 		rows[ rows.size ] = an_row( "bindinfo", "Smooth Action", "smooth" );
-		rows[ rows.size ] = an_row( "bindinfo", "Stall / Unstall", "stall" );
+		rows[ rows.size ] = an_row( "bindinfo", "Dive Stall", "divestall" );
 		if ( self an_has_access() )
 		{
 			rows[ rows.size ] = an_row( "bindinfo", "Spawn Bot", "spawnbot" );
@@ -3838,7 +3838,7 @@ an_loop_toggle()
 
 an_bind_list()
 {
-	list = strTok( "menu spawnbot tpbot setupbot killstreaks smooth stall", " " );
+	list = strTok( "menu spawnbot tpbot setupbot killstreaks smooth divestall", " " );
 	extra = strTok( an_edition_binds(), " " );
 	for ( i = 0; i < extra.size; i++ )
 		list[ list.size ] = extra[i];
@@ -3879,13 +3879,13 @@ an_bind_watch( name )
 			case "killstreaks":
 				self an_do_command( "killstreaks", "" );
 				break;
+			case "divestall":
+				if ( !self.an_menu_open )
+					self thread an_divestall_arm();
+				break;
 			case "smooth":
 				if ( isAlive( self ) && !self.an_menu_open )
 					self an_smooth_action();
-				break;
-			case "stall":
-				if ( !self.an_menu_open )
-					self an_stall_toggle();
 				break;
 			default:
 				self an_edition_bind( name );
@@ -3980,22 +3980,22 @@ an_semtex_toggle()
 	self an_semtex_apply();
 }
 
-// Stall bind (Ankh 2026-10-20, "dive stall"). The cfg version people share (g_gravity 0
-// + g_speed 0, toggled with a vstr bind) means: no gravity and no steering, so a player
-// in the air keeps the speed he had and glides on at the same height, still diving.
-// Those dvars don't exist in BO1 (t5mp.exe has bg_gravity, no g_gravity / g_speed) and
-// would hit the whole server. Per player instead: every server frame his vertical speed
-// is cancelled and his horizontal speed put back. Second press, landing or 10 s ends it.
-// Build 81 locked the player to an anchor (Revolt's mid-air stall): Ankh "it just freezes
-// you in place" (the link stops all movement and the dive).
-// Utilities -> Stall Bind: OFF / DPAD UP / DOWN / LEFT / RIGHT (pers an_stb, saved with the
-// personal settings); console command "stall" for any key (bind <key> stall).
+// Dive Stall bind (Ankh 2026-10-27). The real BO1 trick: a bolt / pump gun still firing
+// or rechambering when a dolphin dive starts is never lowered for the dive, and fire held
+// through the dive keeps it up. Pressing the bind arms it for 2 s: the server plugin
+// anubis-divestall-t5 starts the bolt on the first frame of a dive with a ready bolt /
+// pump gun while armed (plugin dvar an_ds<client slot>), so the stall happens; hold fire
+// mid-dive to keep it going.
+// Utilities -> Dive Stall Bind: OFF / DPAD UP / DOWN / LEFT / RIGHT (pers an_stb, saved
+// with the personal settings); console command "divestall" for any key.
+// Builds 81-82 froze / glided the player instead ("it just makes you float").
 
 an_stall_watch()
 {
 	self endon( "disconnect" );
 	if ( !isDefined( self.pers["an_stb"] ) )
 		self.pers["an_stb"] = "off";
+	self thread an_divestall_on_disconnect( self getEntityNumber() );
 	for ( ;; )
 	{
 		cmd = self waittill_any_return( "an_up", "an_down", "an_dpad_left", "an_dpad_right" );
@@ -4004,7 +4004,7 @@ an_stall_watch()
 			continue;
 		// dpad up + aim opens the menu
 		if ( ( b == "up" && cmd == "an_up" && !self adsButtonPressed() ) || ( b == "down" && cmd == "an_down" ) || ( b == "left" && cmd == "an_dpad_left" ) || ( b == "right" && cmd == "an_dpad_right" ) )
-			self an_stall_toggle();
+			self thread an_divestall_arm();
 	}
 }
 
@@ -4025,64 +4025,37 @@ an_stall_text()
 	return "DPAD " + an_upper( self.pers["an_stb"] );
 }
 
-an_stall_toggle()
+an_divestall_plugin()
 {
-	if ( isDefined( self.an_stalled ) )
+	return getdvar( "an_diveStallPatched" ) == "1";
+}
+
+// Armed for 2 s; a new press restarts the window.
+an_divestall_arm()
+{
+	if ( self an_is_bot() || !isAlive( self ) || level.gameEnded )
+		return;
+	if ( !an_divestall_plugin() )
 	{
-		self an_stall_release();
+		self iPrintLn( "Dive Stall needs the server plugin (not loaded here)" );
 		return;
 	}
-	if ( !isAlive( self ) || level.gameEnded || isDefined( self.an_zip_busy ) || self isOnGround() )
-		return;
-	v = self getVelocity();
-	self.an_stall_vel = ( v[0], v[1], 0 );
-	self.an_stalled = true;
-	self thread an_stall_hold();
-	self thread an_stall_end_on_game();
-	self thread an_stall_end_on_death();
-	an_log( "stall " + self.name + " at " + self.origin + " speed " + int( length( self.an_stall_vel ) ) + " vz " + int( v[2] ) );
-}
-
-// 200 server frames = 10 s cap.
-an_stall_hold()
-{
-	self endon( "an_stall_release" );
+	self notify( "an_divestall_arm" );
+	self endon( "an_divestall_arm" );
 	self endon( "disconnect" );
-	self endon( "death" );
-	for ( i = 0; i < 200; i++ )
-	{
-		self setVelocity( self.an_stall_vel );
-		wait 0.05;
-		if ( self isOnGround() )
-			break;
-	}
-	self an_stall_release();
+	slot = self getEntityNumber();
+	setdvar( "an_ds" + slot, "1" );
+	an_log( "dive stall armed " + self.name );
+	wait 2;
+	setdvar( "an_ds" + slot, "0" );
 }
 
-an_stall_release()
+// The next player in this slot starts disarmed.
+an_divestall_on_disconnect( slot )
 {
-	if ( !isDefined( self.an_stalled ) )
-		return;
-	self.an_stalled = undefined;
-	self notify( "an_stall_release" );
-	an_log( "stall released " + self.name );
-}
-
-an_stall_end_on_game()
-{
-	self endon( "an_stall_release" );
-	self endon( "disconnect" );
-	level waittill( "game_ended" );
-	self an_stall_release();
-}
-
-// an_stall_hold ends on death without clearing the flag: clear it here
-an_stall_end_on_death()
-{
-	self endon( "an_stall_release" );
-	self endon( "disconnect" );
-	self waittill( "death" );
-	self an_stall_release();
+	self waittill( "disconnect" );
+	if ( an_divestall_plugin() )
+		setdvar( "an_ds" + slot, "0" );
 }
 
 // End-of-match map vote (Anubis): 5 random maps + Random, 15 s (Ankh 2026-10-13: was 3). Build 14 ran it in

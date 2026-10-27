@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "95";
+	return "97";
 }
 
 an_on_connect()
@@ -2896,15 +2896,28 @@ an_perk_toggle( key )
 // reload + perk_weapReloadMultiplier 0.001, and the player HOLDS reload + fire, so every
 // shot is followed by an instant reload and the gun fires again almost at once.
 // The dvar is one value for the whole server and the player's game predicts with its own
-// copy (bg_weapons.cpp:2699, reload states with perk bit fastreload), so it is set on the
-// server and sent to every human. While anyone has Rapid Fire on, only Rapid Fire
-// players keep specialty_fastreload (Sleight of Hand Pro gives it to everyone by default,
-// perks.gsc), so nobody else gets instant reloads. Per player, Weapon page, pers an_rf,
-// saved with the personal settings.
+// copy (bg_weapons.cpp:2699, reload states with perk bit fastreload).
+// With the server plugin (anubis-divestall-t5 2.1+, an_rapidPatched 1) it is per player:
+// a Rapid Fire player gets an_rf<client slot> 1 (the server reads 0.001 for them only) and
+// 0.001 in their own game; everyone else keeps 0.5 and their Sleight of Hand (Ankh
+// 2026-10-27: "rapid fire removes sleight of hand for everyone").
+// Without the plugin: the server value is 0.001 while anyone has it on, and only Rapid
+// Fire players keep specialty_fastreload then. Per player, Weapon page, pers an_rf, saved
+// with the personal settings.
 
 an_rapid_init()
 {
 	level thread an_rapid_watch();
+}
+
+an_rapid_plugin()
+{
+	return getdvar( "an_rapidPatched" ) == "1";
+}
+
+an_rapid_on()
+{
+	return isDefined( self.pers["an_rf"] ) && self.pers["an_rf"] == "1";
 }
 
 an_rapid_active()
@@ -2912,20 +2925,29 @@ an_rapid_active()
 	for ( i = 0; i < level.players.size; i++ )
 	{
 		p = level.players[i];
-		if ( an_is_human( p ) && isDefined( p.pers["an_rf"] ) && p.pers["an_rf"] == "1" )
+		if ( an_is_human( p ) && p an_rapid_on() )
 			return true;
 	}
 	return false;
 }
 
+// The server's value.
 an_rapid_value()
 {
-	if ( an_rapid_active() )
+	if ( !an_rapid_plugin() && an_rapid_active() )
 		return "0.001";
 	return "0.5";
 }
 
-// Catches the last Rapid Fire player leaving and settings loaded at join.
+// This player's game.
+an_rapid_player_value()
+{
+	if ( an_rapid_plugin() && self an_rapid_on() )
+		return "0.001";
+	return an_rapid_value();
+}
+
+// Catches the last Rapid Fire player leaving, free slots and settings loaded at join.
 an_rapid_watch()
 {
 	level endon( "game_ended" );
@@ -2936,6 +2958,32 @@ an_rapid_watch()
 		d = float( getdvar( "perk_weapReloadMultiplier" ) ) - float( an_rapid_value() );
 		if ( d > 0.0001 || d < -0.0001 )
 			an_rapid_update();
+		else if ( an_rapid_plugin() )
+			an_rapid_slots();
+	}
+}
+
+// Plugin: an_rf<slot> follows the player in that slot (0 for bots and free slots).
+an_rapid_slots()
+{
+	want = [];
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[i];
+		if ( an_is_human( p ) && p an_rapid_on() )
+			want[ p getEntityNumber() ] = p;
+	}
+	for ( s = 0; s < 18; s++ )
+	{
+		v = "0";
+		if ( isDefined( want[s] ) )
+			v = "1";
+		if ( getdvar( "an_rf" + s ) != v )
+		{
+			setdvar( "an_rf" + s, v );
+			if ( isDefined( want[s] ) )
+				want[s] an_rapid_apply_player();
+		}
 	}
 }
 
@@ -2943,13 +2991,15 @@ an_rapid_update()
 {
 	v = an_rapid_value();
 	setdvar( "perk_weapReloadMultiplier", v );
-	an_log( "rapid fire: perk_weapReloadMultiplier " + v + " (server reads [" + getdvar( "perk_weapReloadMultiplier" ) + "])" );
+	an_log( "rapid fire: perk_weapReloadMultiplier " + v + " (server reads [" + getdvar( "perk_weapReloadMultiplier" ) + "], per player " + an_rapid_plugin() + ")" );
+	if ( an_rapid_plugin() )
+		an_rapid_slots();
 	for ( i = 0; i < level.players.size; i++ )
 	{
 		p = level.players[i];
 		if ( !an_is_human( p ) )
 			continue;
-		p setClientDvar( "perk_weapReloadMultiplier", v );
+		p an_rapid_apply_player();
 		p an_perks_apply();
 	}
 }
@@ -2957,17 +3007,19 @@ an_rapid_update()
 // Each spawn (an_weapons_spawned).
 an_rapid_apply_player()
 {
-	self setClientDvar( "perk_weapReloadMultiplier", an_rapid_value() );
+	self setClientDvar( "perk_weapReloadMultiplier", self an_rapid_player_value() );
 }
 
 // From an_perks_apply, after the perk toggles.
 an_rapid_perks()
 {
-	if ( !an_rapid_active() )
+	if ( self an_rapid_on() )
+	{
+		if ( an_rapid_plugin() || an_rapid_active() )
+			self setPerk( "specialty_fastreload" );
 		return;
-	if ( self.pers["an_rf"] == "1" )
-		self setPerk( "specialty_fastreload" );
-	else if ( self hasPerk( "specialty_fastreload" ) )
+	}
+	if ( !an_rapid_plugin() && an_rapid_active() && self hasPerk( "specialty_fastreload" ) )
 		self unsetPerk( "specialty_fastreload" );
 }
 
@@ -3881,7 +3933,7 @@ an_bind_watch( name )
 				break;
 			case "divestall":
 				if ( !self.an_menu_open )
-					self thread an_divestall_arm();
+					self thread an_divestall_start();
 				break;
 			case "smooth":
 				if ( isAlive( self ) && !self.an_menu_open )
@@ -3980,15 +4032,16 @@ an_semtex_toggle()
 	self an_semtex_apply();
 }
 
-// Dive Stall bind (Ankh 2026-10-27). The real BO1 trick: a bolt / pump gun still firing
-// or rechambering when a dolphin dive starts is never lowered for the dive, and fire held
-// through the dive keeps it up. Pressing the bind arms it for 2 s: the server plugin
-// anubis-divestall-t5 starts the bolt on the first frame of a dive with a ready bolt /
-// pump gun while armed (plugin dvar an_ds<client slot>), so the stall happens; hold fire
-// mid-dive to keep it going.
+// Dive Stall bind (Ankh 2026-10-27): one press and the server plays Ankh's dive stall cfg
+// for this player (com_maxfps 57): shoot, wait 40, weapnext, wait 2, weapnext, wait 40,
+// sprint + forward, wait 30, prone (the dive), wait 10, release, wait 30, fire for 60
+// frames. The server plugin anubis-divestall-t5 2.x rewrites the player's commands for
+// those 3.6 s (17 ms frames); a new value in its dvar an_ds<client slot> starts it, 0
+// cancels (death, disconnect). Nothing to set up on the player's side.
 // Utilities -> Dive Stall Bind: OFF / DPAD UP / DOWN / LEFT / RIGHT (pers an_stb, saved
 // with the personal settings); console command "divestall" for any key.
-// Builds 81-82 froze / glided the player instead ("it just makes you float").
+// Builds 81-82 froze / glided the player instead ("it just makes you float"); plugin 1.x
+// (bolt started at the dive) did nothing visible.
 
 an_stall_watch()
 {
@@ -4004,7 +4057,7 @@ an_stall_watch()
 			continue;
 		// dpad up + aim opens the menu
 		if ( ( b == "up" && cmd == "an_up" && !self adsButtonPressed() ) || ( b == "down" && cmd == "an_down" ) || ( b == "left" && cmd == "an_dpad_left" ) || ( b == "right" && cmd == "an_dpad_right" ) )
-			self thread an_divestall_arm();
+			self thread an_divestall_start();
 	}
 }
 
@@ -4030,8 +4083,8 @@ an_divestall_plugin()
 	return getdvar( "an_diveStallPatched" ) == "1";
 }
 
-// Armed for 2 s; a new press restarts the window.
-an_divestall_arm()
+// A press during a run starts it over.
+an_divestall_start()
 {
 	if ( self an_is_bot() || !isAlive( self ) || level.gameEnded )
 		return;
@@ -4040,17 +4093,17 @@ an_divestall_arm()
 		self iPrintLn( "Dive Stall needs the server plugin (not loaded here)" );
 		return;
 	}
-	self notify( "an_divestall_arm" );
-	self endon( "an_divestall_arm" );
+	self notify( "an_divestall_start" );
+	self endon( "an_divestall_start" );
 	self endon( "disconnect" );
 	slot = self getEntityNumber();
-	setdvar( "an_ds" + slot, "1" );
-	an_log( "dive stall armed " + self.name );
-	wait 2;
+	setdvar( "an_ds" + slot, ( getDvarInt( "an_ds" + slot ) % 1000000 ) + 1 );
+	an_log( "dive stall started " + self.name );
+	self waittill( "death" );
 	setdvar( "an_ds" + slot, "0" );
 }
 
-// The next player in this slot starts disarmed.
+// Stops a run for the next player in this slot.
 an_divestall_on_disconnect( slot )
 {
 	self waittill( "disconnect" );

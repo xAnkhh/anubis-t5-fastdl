@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "98";
+	return "99";
 }
 
 an_on_connect()
@@ -248,9 +248,7 @@ an_give_killstreak( type )
 
 an_map_list()
 {
-	if ( an_edition_maps() != "" )
-		return strTok( an_edition_maps(), " " );
-	return strTok( "mp_array mp_cracked mp_crisis mp_firingrange mp_duga mp_hanoi mp_cairo mp_havoc mp_cosmodrome mp_nuked mp_radiation mp_mountain mp_villa mp_russianbase mp_berlinwall2 mp_discovery mp_kowloon mp_stadium mp_gridlock mp_hotel mp_outskirts mp_zoo mp_drivein mp_area51 mp_golfcourse mp_silo", " " );
+	return strTok( "mp_array mp_cracked mp_crisis mp_firingrange mp_duga mp_hanoi mp_cairo mp_havoc mp_cosmodrome mp_nuked mp_radiation mp_mountain mp_villa mp_russianbase mp_berlinwall2 mp_discovery mp_kowloon mp_stadium mp_gridlock mp_hotel mp_outskirts mp_zoo mp_drivein mp_area51 mp_golfcourse mp_silo " + an_edition_maps(), " " );
 }
 
 an_map_name( map )
@@ -1171,7 +1169,7 @@ an_almost_hit_toggle()
 		self.pers["an_ah"] = "1";
 }
 
-// Dpad binds for the edition's bindable commands (No Barriers: unstuck, resetspawn,
+// Dpad binds for the position commands (edition.gsc: unstuck, punstuck, resetspawn,
 // enemyspawn). Each one: OFF / DPAD UP / DOWN / LEFT / RIGHT, pers an_db_<name>,
 // saved with the personal settings. Dpad up only counts without aiming (aim + up opens
 // the menu); nothing fires while the menu is open.
@@ -1242,8 +1240,14 @@ an_dpad_bind_keys()
 	return keys;
 }
 
-// Edition hooks. This is the regular edition; the No Barriers edition (mod/src_nb,
-// built with tools/build.sh --nb into mod/anubis_nb) replaces this file with its own.
+// No Barriers maps (patched copies of 17 stock maps, mp_anubis_<map>, served as
+// usermaps) in the normal list and rotation, easy elevators (owner toggle) and the
+// position binds:
+//   bind <key> unstuck        straight up 150 units
+//   bind <key> punstuck       100 units the way you look
+//   bind <key> resetspawn     to a start spawn of your own side
+//   bind <key> enemyspawn     to a start spawn of the other side
+
 
 an_edition()
 {
@@ -1256,49 +1260,271 @@ an_save_root()
 	return "anubis/";
 }
 
-// Map list for the Maps page and the vote; "" = the stock list.
+// Extra maps for the Maps page and the vote (after the stock list); same list as
+// tools/nbmap/maps.txt.
 an_edition_maps()
 {
-	return "";
+	return "mp_anubis_nuked mp_anubis_cosmodrome mp_anubis_crisis mp_anubis_cairo mp_anubis_firingrange mp_anubis_duga mp_anubis_russianbase mp_anubis_villa mp_anubis_hanoi mp_anubis_radiation mp_anubis_stadium mp_anubis_hotel mp_anubis_zoo mp_anubis_silo mp_anubis_area51 mp_anubis_berlinwall2 mp_anubis_array";
 }
 
 an_edition_map_name( map )
 {
+	switch ( map )
+	{
+		case "mp_anubis_nuked": return "Nuketown NB";
+		case "mp_anubis_cosmodrome": return "Launch NB";
+		case "mp_anubis_crisis": return "Crisis NB";
+		case "mp_anubis_cairo": return "Havana NB";
+		case "mp_anubis_firingrange": return "Firing Range NB";
+		case "mp_anubis_duga": return "Grid NB";
+		case "mp_anubis_russianbase": return "WMD NB";
+		case "mp_anubis_villa": return "Villa NB";
+		case "mp_anubis_hanoi": return "Hanoi NB";
+		case "mp_anubis_radiation": return "Radiation NB";
+		case "mp_anubis_stadium": return "Stadium NB";
+		case "mp_anubis_hotel": return "Hotel NB";
+		case "mp_anubis_zoo": return "Zoo NB";
+		case "mp_anubis_silo": return "Silo NB";
+		case "mp_anubis_area51": return "Hangar 18 NB";
+		case "mp_anubis_berlinwall2": return "Berlin Wall NB";
+		case "mp_anubis_array": return "Array NB";
+	}
 	return map;
 }
 
-// Extra console commands for the Bindables page.
+an_nb_map()
+{
+	return an_nb_stock_map( getdvar( "mapname" ) ) != getdvar( "mapname" );
+}
+
+an_nb_stock_map( map )
+{
+	prefix = "mp_anubis_";
+	if ( map.size > prefix.size && getSubStr( map, 0, prefix.size ) == prefix )
+		return "mp_" + getSubStr( map, prefix.size, map.size );
+	return map;
+}
+
 an_edition_binds()
 {
-	return "";
+	return "unstuck punstuck resetspawn enemyspawn";
 }
 
-an_edition_bind( name )
-{
-}
-
-an_edition_bind_rows( rows )
-{
-	return rows;
-}
-
-// main(): replaceFunc calls (before the stock scripts run)
+// Renamed maps have no row in mp/mapsTable.csv (code_post_gfx_mp), which stock
+// _teams::setPlayerModels reads by mapname for the team sets; without one it falls back
+// to junglemarines (SOG / NVA), whose models aren't in the map zone ("Could not load
+// xmodel c_usa_sog_mp_body_*"): every player had no body (invisible, Ankh 2026-10-23).
+// Same function, looked up under the stock map name (mp_anubis_nuked -> mp_nuked);
+// hooked on the No Barriers maps only.
 an_edition_main()
 {
+	if ( an_nb_map() )
+		replaceFunc( maps\mp\gametypes\_teams::setPlayerModels, ::an_nb_set_player_models );
 }
 
+an_nb_set_player_models()
+{
+	game["allies_model"] = [];
+	map = an_nb_stock_map( getdvar( "mapname" ) );
+
+	alliesCharSet = tableLookup( "mp/mapsTable.csv", 0, map, 1 );
+	if ( !isDefined( alliesCharSet ) || alliesCharSet == "" || !isDefined( game["allies_teamset"][alliesCharSet] ) )
+	{
+		game["allies_soldiertype"] = "junglemarines";
+		game["allies"] = "marines";
+		alliesCharSet = "junglemarines";
+	}
+	else
+		game["allies_soldiertype"] = alliesCharSet;
+
+	axisCharSet = tableLookup( "mp/mapsTable.csv", 0, map, 2 );
+	if ( !isDefined( axisCharSet ) || axisCharSet == "" || !isDefined( game["allies_teamset"][axisCharSet] ) )
+	{
+		game["axis_soldiertype"] = "junglemarines";
+		game["axis"] = "nva";
+		axisCharSet = "junglemarines";
+	}
+	else
+		game["axis_soldiertype"] = axisCharSet;
+
+	an_log( "nb team sets for " + map + ": " + game["allies_soldiertype"] + " / " + game["axis_soldiertype"] );
+	[[ game["allies_teamset"][ game["allies_soldiertype"] ] ]]();
+	[[ game["axis_teamset"][ game["axis_soldiertype"] ] ]]();
+}
+
+// Easy elevators (Manager > Movement, dvar an_ele, default on, kept across maps):
+// BO1 player movement uses its GJK collision when phys_player_collision_mode is 1
+// (default); the stuck correction that lifts a player out of a corner
+// (PM_CorrectAllSolid) only runs with the older box traces, mode 0 (KisakBlack
+// bg_pmove.cpp PM_GroundTrace), and the elevators plugin (bg_elevators 2) makes it
+// take the lift even when still stuck. phys_player_collision_mode has no flags
+// (t5mp.exe 0x541E6F), so the server and every player's game each keep their own
+// copy: both are set, else prediction differs.
+// All-angle bounces (plugin bg_bouncesAllAngles 2) on the No Barriers maps only.
 an_edition_init()
 {
+	if ( getdvar( "an_ele" ) == "" )
+		setdvar( "an_ele", "1" );
+	if ( an_nb_map() )
+		setdvar( "bg_bouncesAllAngles", "2" );
+	else
+		setdvar( "bg_bouncesAllAngles", "0" );
+	an_elevators_apply();
+}
+
+an_elevators_apply()
+{
+	if ( getdvar( "an_ele" ) == "1" )
+	{
+		setdvar( "phys_player_collision_mode", "0" );
+		setdvar( "bg_elevators", "2" );
+	}
+	else
+	{
+		setdvar( "phys_player_collision_mode", "1" );
+		setdvar( "bg_elevators", "0" );
+	}
+	for ( i = 0; isDefined( level.players ) && i < level.players.size; i++ )
+		if ( !level.players[i] an_is_bot() )
+			level.players[i] setClientDvar( "phys_player_collision_mode", getdvar( "phys_player_collision_mode" ) );
+	an_log( "elevators " + getdvar( "an_ele" ) + ": phys_player_collision_mode=[" + getdvar( "phys_player_collision_mode" ) + "] bg_elevators=[" + getdvar( "bg_elevators" ) + "] bg_bouncesAllAngles=[" + getdvar( "bg_bouncesAllAngles" ) + "]" );
+}
+
+an_elevators_toggle()
+{
+	if ( getdvar( "an_ele" ) == "1" )
+		setdvar( "an_ele", "0" );
+	else
+		setdvar( "an_ele", "1" );
+	an_elevators_apply();
+}
+
+an_elevators_text()
+{
+	if ( getdvar( "an_ele" ) == "1" )
+		return "ON";
+	return "OFF";
 }
 
 an_edition_connected()
 {
+	if ( self an_is_bot() )
+		return;
+	self setClientDvar( "phys_player_collision_mode", getdvar( "phys_player_collision_mode" ) );
 }
 
-// true = a human ignores this map damage
+an_edition_bind_rows( rows )
+{
+	rows[ rows.size ] = an_row( "bindinfo", "Unstuck", "unstuck" );
+	rows[ rows.size ] = an_row( "dpadbind", "Unstuck Bind", "unstuck" );
+	rows[ rows.size ] = an_row( "bindinfo", "Punstuck", "punstuck" );
+	rows[ rows.size ] = an_row( "dpadbind", "Punstuck Bind", "punstuck" );
+	rows[ rows.size ] = an_row( "bindinfo", "Reset to Spawn", "resetspawn" );
+	rows[ rows.size ] = an_row( "dpadbind", "Reset to Spawn Bind", "resetspawn" );
+	rows[ rows.size ] = an_row( "bindinfo", "Reset to Enemy Spawn", "enemyspawn" );
+	rows[ rows.size ] = an_row( "dpadbind", "Enemy Spawn Bind", "enemyspawn" );
+	return rows;
+}
+
+// No Barriers maps, out of the map: only the death triggers below the map centre
+// (falling out of the world; movement.gsc an_barrier_init marks them with an_origin)
+// still hurt. Sky and out-of-map volumes (Nuketown *111, script_noteworthy
+// "tvguided_safe", dmg 1000 every frame = constant hurt flash, Ankh 2026-10-23) are
+// ignored. Stock maps: unchanged.
 an_edition_skip_damage( eInflictor, eAttacker, mod )
 {
-	return false;
+	if ( mod != "MOD_TRIGGER_HURT" || !an_nb_map() )
+		return false;
+	t = eInflictor;
+	if ( !isDefined( t ) || !isDefined( t.classname ) || t.classname != "trigger_hurt" )
+		t = eAttacker;
+	if ( !isDefined( t ) || !isDefined( t.classname ) || t.classname != "trigger_hurt" )
+		return false;
+	if ( isDefined( t.an_origin ) )
+		return false;
+	if ( !isDefined( self.an_nb_sky_logged ) )
+	{
+		self.an_nb_sky_logged = true;
+		an_log( "nb: out-of-map trigger ignored for " + self.name + " at " + self.origin );
+	}
+	return true;
+}
+
+an_edition_bind( name )
+{
+	if ( level.gameEnded || !isAlive( self ) || self.sessionstate != "playing" || self.an_menu_open || isDefined( self.an_zip_busy ) )
+		return;
+	if ( isDefined( self.an_nb_move_time ) && getTime() - self.an_nb_move_time < 1000 )
+		return;
+
+	switch ( name )
+	{
+		case "unstuck":
+			self.an_nb_move_time = getTime();
+			self setOrigin( self.origin + ( 0, 0, 150 ) );
+			an_log( "unstuck " + self.name + " to " + self.origin );
+			break;
+		case "punstuck":
+			self an_punstuck();
+			break;
+		case "resetspawn":
+			self an_nb_to_spawn( false );
+			break;
+		case "enemyspawn":
+			self an_nb_to_spawn( true );
+			break;
+	}
+}
+
+// 100 units forward along the view yaw; looking steeply up or down (70 degrees or
+// more) also moves up / down by the same share of 100.
+an_punstuck()
+{
+	angles = self getPlayerAngles();
+	move = anglesToForward( ( 0, angles[1], 0 ) ) * 100;
+	if ( angles[0] >= 70 || angles[0] <= -70 )
+		move = move + ( 0, 0, 0 - angles[0] / 90 * 100 );
+	self.an_nb_move_time = getTime();
+	self setOrigin( self.origin + move );
+	an_log( "punstuck " + self.name + " to " + self.origin );
+}
+
+// S&D start spawns per side (stock sd.gsc onStartGameType); other modes use the
+// team start spawns.
+an_nb_to_spawn( enemy )
+{
+	team = self.pers["team"];
+	if ( !isDefined( team ) || ( team != "allies" && team != "axis" ) )
+		return;
+	if ( enemy )
+		team = getOtherTeam( team );
+
+	if ( level.gameType == "sd" )
+	{
+		if ( team == game["attackers"] )
+			classname = "mp_sd_spawn_attacker";
+		else
+			classname = "mp_sd_spawn_defender";
+	}
+	else
+		classname = "mp_tdm_spawn_" + team + "_start";
+
+	spots = maps\mp\gametypes\_spawnlogic::getSpawnpointArray( classname );
+	if ( spots.size == 0 )
+	{
+		self iPrintLn( "No spawn points here" );
+		an_log( "spawn bind: no " + classname + " for " + self.name );
+		return;
+	}
+	spot = spots[ randomInt( spots.size ) ];
+	self.an_nb_move_time = getTime();
+	self setOrigin( spot.origin );
+	self setPlayerAngles( spot.angles );
+	self setVelocity( ( 0, 0, 0 ) );
+	if ( enemy )
+		an_log( "enemy spawn " + self.name + " to " + spot.origin + " (" + classname + ")" );
+	else
+		an_log( "reset spawn " + self.name + " to " + spot.origin + " (" + classname + ")" );
 }
 
 // Friendly bots (Ankh 2026-10-19: "friendly bots on toggle that spawn in random parts of
@@ -2146,6 +2372,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "mv", "Prone Spins", "prone" );
 		rows[ rows.size ] = an_row( "mv", "Bigger Use Radius", "use" );
 		rows[ rows.size ] = an_row( "mv", "Lower Death Barriers", "barrier" );
+		rows[ rows.size ] = an_row( "mv", "Easy Elevators", "ele" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
 	else if ( page == "bot" )
@@ -2460,6 +2687,8 @@ an_do_command( cmd, arg )
 				an_friendly_cycle();
 			else if ( arg == "lunge" )
 				an_lunge_cycle();
+			else if ( arg == "ele" )
+				an_elevators_toggle();
 			else
 				an_movement_toggle( arg );
 			break;
@@ -2657,6 +2886,8 @@ an_movement_text( key )
 		return an_friendly_text();
 	if ( key == "lunge" )
 		return an_lunge_text();
+	if ( key == "ele" )
+		return an_elevators_text();
 	if ( key == "barrier" )
 	{
 		v = getdvar( "an_mv_barrier" );

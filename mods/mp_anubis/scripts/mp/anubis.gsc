@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "102";
+	return "103";
 }
 
 an_on_connect()
@@ -1368,7 +1368,7 @@ an_edition_init()
 	if ( an_nb_map() )
 		setdvar( "bg_bouncesAllAngles", "2" );
 	else
-		setdvar( "bg_bouncesAllAngles", "0" );
+		setdvar( "bg_bouncesAllAngles", "1" ); // simple: box collision alone bounces weaker than the old mode (live log, build 99)
 	level.an_ele_hold = true;
 	an_elevators_apply();
 	level thread an_elevators_round_hold();

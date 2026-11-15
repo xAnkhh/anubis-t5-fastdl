@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "103";
+	return "104";
 }
 
 an_on_connect()
@@ -1368,7 +1368,13 @@ an_edition_init()
 	if ( an_nb_map() )
 		setdvar( "bg_bouncesAllAngles", "2" );
 	else
-		setdvar( "bg_bouncesAllAngles", "1" ); // simple: box collision alone bounces weaker than the old mode (live log, build 99)
+	{
+		// Stock maps: an_baa_stock (default 1 = simple; box collision alone bounces
+		// weaker than the old mode, live log build 99). Changeable over rcon for tests.
+		if ( getdvar( "an_baa_stock" ) == "" )
+			setdvar( "an_baa_stock", "1" );
+		setdvar( "bg_bouncesAllAngles", getdvar( "an_baa_stock" ) );
+	}
 	level.an_ele_hold = true;
 	an_elevators_apply();
 	level thread an_elevators_round_hold();
@@ -2777,6 +2783,7 @@ an_movement_init()
 
 	level thread an_barrier_init();
 	level thread an_bounce_boost_loop();
+	level thread an_bounce_debug_loop();
 	level thread an_zip_loop();
 }
 
@@ -3025,6 +3032,47 @@ an_bounce_boost_loop()
 				v = ( v[0], v[1], v[2] * boost );
 			}
 			p.an_last_vz = v[2];
+		}
+	}
+}
+
+// Bounce debug (dvar an_bounce_debug 1, off by default): for every human, from the
+// first frame falling faster than 200 until half a second after the fall ends, one
+// log line per server frame with origin, velocity and ground state. On the frame the
+// fall stops, the surface normals straight down and along the fall are logged too.
+an_bounce_debug_loop()
+{
+	level endon( "game_ended" );
+	for ( ;; )
+	{
+		wait 0.05;
+		if ( getdvar( "an_bounce_debug" ) != "1" )
+		{
+			wait 1;
+			continue;
+		}
+		for ( i = 0; i < level.players.size; i++ )
+		{
+			p = level.players[i];
+			if ( !an_is_human( p ) || !isAlive( p ) )
+				continue;
+			v = p getVelocity();
+			o = p.origin;
+			if ( v[2] < -200 )
+				p.an_bd_until = getTime() + 500;
+			if ( isDefined( p.an_bd_until ) && getTime() <= p.an_bd_until )
+			{
+				line = "bd " + p.name + " t " + getTime() + " o " + int( o[0] ) + " " + int( o[1] ) + " " + int( o[2] ) + " v " + int( v[0] ) + " " + int( v[1] ) + " " + int( v[2] ) + " ground " + p isOnGround();
+				if ( isDefined( p.an_bd_v ) && p.an_bd_v[2] < -200 && v[2] > p.an_bd_v[2] + 100 )
+				{
+					down = bulletTrace( o + ( 0, 0, 30 ), o - ( 0, 0, 60 ), false, p );
+					along = bulletTrace( p.an_bd_o + ( 0, 0, 30 ), p.an_bd_o + ( 0, 0, 30 ) + p.an_bd_v * 0.2, false, p );
+					line = line + " HIT down n " + down["normal"] + " f " + down["fraction"] + " along n " + along["normal"] + " f " + along["fraction"];
+				}
+				an_log( line );
+			}
+			p.an_bd_v = v;
+			p.an_bd_o = o;
 		}
 	}
 }

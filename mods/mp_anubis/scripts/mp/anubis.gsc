@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "104";
+	return "106";
 }
 
 an_on_connect()
@@ -249,6 +249,17 @@ an_give_killstreak( type )
 an_map_list()
 {
 	return strTok( "mp_array mp_cracked mp_crisis mp_firingrange mp_duga mp_hanoi mp_cairo mp_havoc mp_cosmodrome mp_nuked mp_radiation mp_mountain mp_villa mp_russianbase mp_berlinwall2 mp_discovery mp_kowloon mp_stadium mp_gridlock mp_hotel mp_outskirts mp_zoo mp_drivein mp_area51 mp_golfcourse mp_silo " + an_edition_maps(), " " );
+}
+
+// The stock maps only (map vote): the No Barriers maps stay on the Maps page.
+an_map_list_stock()
+{
+	maps = an_map_list();
+	out = [];
+	for ( i = 0; i < maps.size; i++ )
+		if ( an_nb_stock_map( maps[i] ) == maps[i] )
+			out[ out.size ] = maps[i];
+	return out;
 }
 
 an_map_name( map )
@@ -1169,7 +1180,7 @@ an_almost_hit_toggle()
 		self.pers["an_ah"] = "1";
 }
 
-// Dpad binds for the position commands (edition.gsc: unstuck, punstuck, resetspawn,
+// Dpad binds for the position commands (edition.gsc: resetspawn,
 // enemyspawn). Each one: OFF / DPAD UP / DOWN / LEFT / RIGHT, pers an_db_<name>,
 // saved with the personal settings. Dpad up only counts without aiming (aim + up opens
 // the menu); nothing fires while the menu is open.
@@ -1241,10 +1252,8 @@ an_dpad_bind_keys()
 }
 
 // No Barriers maps (patched copies of 17 stock maps, mp_anubis_<map>, served as
-// usermaps) in the normal list and rotation, easy elevators (owner toggle) and the
+// usermaps) on the owner's Maps page only (not in the vote or the rotation), and the
 // position binds:
-//   bind <key> unstuck        straight up 150 units
-//   bind <key> punstuck       100 units the way you look
 //   bind <key> resetspawn     to a start spawn of your own side
 //   bind <key> enemyspawn     to a start spawn of the other side
 
@@ -1307,7 +1316,7 @@ an_nb_stock_map( map )
 
 an_edition_binds()
 {
-	return "unstuck punstuck resetspawn enemyspawn";
+	return "resetspawn enemyspawn";
 }
 
 // Renamed maps have no row in mp/mapsTable.csv (code_post_gfx_mp), which stock
@@ -1352,101 +1361,32 @@ an_nb_set_player_models()
 	[[ game["axis_teamset"][ game["axis_soldiertype"] ] ]]();
 }
 
-// Easy elevators (Manager > Movement, dvar an_ele, default on, kept across maps):
-// BO1 player movement uses its GJK collision when phys_player_collision_mode is 1
-// (default); the stuck correction that lifts a player out of a corner
-// (PM_CorrectAllSolid) only runs with the older box traces, mode 0 (KisakBlack
-// bg_pmove.cpp PM_GroundTrace), and the elevators plugin (bg_elevators 2) makes it
-// take the lift even when still stuck. phys_player_collision_mode has no flags
-// (t5mp.exe 0x541E6F), so the server and every player's game each keep their own
-// copy: both are set, else prediction differs.
-// All-angle bounces (plugin bg_bouncesAllAngles 2) on the No Barriers maps only.
+// Stock collision and no easy elevators: phys_player_collision_mode 1 (the game's
+// default) on the server and on every player's game (earlier builds set 0 on both;
+// the dvar has no flags, so each side keeps its own copy), bg_elevators 0 (the server
+// plugin's elevator patch then runs the stock code). Bounces: Plutonium's
+// sv_enableBounces (movement.gsc); the plugin's all-angle bounces
+// (bg_bouncesAllAngles 2) on the No Barriers maps only.
 an_edition_init()
 {
-	if ( getdvar( "an_ele" ) == "" )
-		setdvar( "an_ele", "1" );
 	if ( an_nb_map() )
 		setdvar( "bg_bouncesAllAngles", "2" );
 	else
-	{
-		// Stock maps: an_baa_stock (default 1 = simple; box collision alone bounces
-		// weaker than the old mode, live log build 99). Changeable over rcon for tests.
-		if ( getdvar( "an_baa_stock" ) == "" )
-			setdvar( "an_baa_stock", "1" );
-		setdvar( "bg_bouncesAllAngles", getdvar( "an_baa_stock" ) );
-	}
-	level.an_ele_hold = true;
-	an_elevators_apply();
-	level thread an_elevators_round_hold();
-}
-
-// Easy elevators stay off from the start of every round until 10 seconds after
-// the prematch countdown, so a player who spawns touching geometry or another
-// player is not lifted by accident. Only bg_elevators changes (server side); the
-// collision mode stays as it is, so nothing differs for the players' games.
-an_elevators_round_hold()
-{
-	while ( !isDefined( level.inPrematchPeriod ) )
-		wait 0.05;
-	while ( level.inPrematchPeriod )
-		wait 0.05;
-	wait 10;
-	level.an_ele_hold = false;
-	if ( getdvar( "an_ele" ) == "1" )
-		setdvar( "bg_elevators", "2" );
-	an_log( "elevators round hold over: bg_elevators=[" + getdvar( "bg_elevators" ) + "]" );
-}
-
-an_elevators_apply()
-{
-	if ( getdvar( "an_ele" ) == "1" )
-	{
-		setdvar( "phys_player_collision_mode", "0" );
-		if ( isDefined( level.an_ele_hold ) && level.an_ele_hold )
-			setdvar( "bg_elevators", "0" );
-		else
-			setdvar( "bg_elevators", "2" );
-	}
-	else
-	{
-		setdvar( "phys_player_collision_mode", "1" );
-		setdvar( "bg_elevators", "0" );
-	}
-	for ( i = 0; isDefined( level.players ) && i < level.players.size; i++ )
-		if ( !level.players[i] an_is_bot() )
-			level.players[i] setClientDvar( "phys_player_collision_mode", getdvar( "phys_player_collision_mode" ) );
-	an_log( "elevators " + getdvar( "an_ele" ) + ": phys_player_collision_mode=[" + getdvar( "phys_player_collision_mode" ) + "] bg_elevators=[" + getdvar( "bg_elevators" ) + "] bg_bouncesAllAngles=[" + getdvar( "bg_bouncesAllAngles" ) + "]" );
-}
-
-an_elevators_toggle()
-{
-	if ( getdvar( "an_ele" ) == "1" )
-		setdvar( "an_ele", "0" );
-	else
-		setdvar( "an_ele", "1" );
-	an_elevators_apply();
-}
-
-an_elevators_text()
-{
-	if ( getdvar( "an_ele" ) == "1" )
-		return "ON";
-	return "OFF";
+		setdvar( "bg_bouncesAllAngles", "0" );
+	setdvar( "phys_player_collision_mode", "1" );
+	setdvar( "bg_elevators", "0" );
+	an_log( "collision: phys_player_collision_mode=[" + getdvar( "phys_player_collision_mode" ) + "] bg_elevators=[" + getdvar( "bg_elevators" ) + "] bg_bouncesAllAngles=[" + getdvar( "bg_bouncesAllAngles" ) + "]" );
 }
 
 an_edition_connected()
 {
 	if ( self an_is_bot() )
 		return;
-	self setClientDvar( "phys_player_collision_mode", getdvar( "phys_player_collision_mode" ) );
+	self setClientDvar( "phys_player_collision_mode", "1" );
 }
 
 an_edition_bind_rows( rows )
 {
-	rows[ rows.size ] = an_row( "bindinfo", "Unstuck", "unstuck" );
-	rows[ rows.size ] = an_row( "dpadbind", "Unstuck Bind", "unstuck" );
-	rows[ rows.size ] = an_row( "bindinfo", "Punstuck", "punstuck" );
-	rows[ rows.size ] = an_row( "dpadbind", "Punstuck Bind", "punstuck" );
 	rows[ rows.size ] = an_row( "bindinfo", "Reset to Spawn", "resetspawn" );
 	rows[ rows.size ] = an_row( "dpadbind", "Reset to Spawn Bind", "resetspawn" );
 	rows[ rows.size ] = an_row( "bindinfo", "Reset to Enemy Spawn", "enemyspawn" );
@@ -1459,7 +1399,7 @@ an_edition_bind_rows( rows )
 // still hurt. Sky and out-of-map volumes (Nuketown *111, script_noteworthy
 // "tvguided_safe", dmg 1000 every frame = constant hurt flash, Ankh 2026-10-23) are
 // ignored. Stock maps: only the sky barrier (marked an_sky by an_barrier_init) is
-// ignored, so a player can elevate up to and past it; hazards and the fall
+// ignored, so a player can go up to and past it; hazards and the fall
 // triggers still kill.
 an_edition_skip_damage( eInflictor, eAttacker, mod )
 {
@@ -1491,14 +1431,6 @@ an_edition_bind( name )
 
 	switch ( name )
 	{
-		case "unstuck":
-			self.an_nb_move_time = getTime();
-			self setOrigin( self.origin + ( 0, 0, 150 ) );
-			an_log( "unstuck " + self.name + " to " + self.origin );
-			break;
-		case "punstuck":
-			self an_punstuck();
-			break;
 		case "resetspawn":
 			self an_nb_to_spawn( false );
 			break;
@@ -1506,19 +1438,6 @@ an_edition_bind( name )
 			self an_nb_to_spawn( true );
 			break;
 	}
-}
-
-// 100 units forward along the view yaw; looking steeply up or down (70 degrees or
-// more) also moves up / down by the same share of 100.
-an_punstuck()
-{
-	angles = self getPlayerAngles();
-	move = anglesToForward( ( 0, angles[1], 0 ) ) * 100;
-	if ( angles[0] >= 70 || angles[0] <= -70 )
-		move = move + ( 0, 0, 0 - angles[0] / 90 * 100 );
-	self.an_nb_move_time = getTime();
-	self setOrigin( self.origin + move );
-	an_log( "punstuck " + self.name + " to " + self.origin );
 }
 
 // S&D start spawns per side (stock sd.gsc onStartGameType); other modes use the
@@ -2404,7 +2323,6 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "mv", "Prone Spins", "prone" );
 		rows[ rows.size ] = an_row( "mv", "Bigger Use Radius", "use" );
 		rows[ rows.size ] = an_row( "mv", "Lower Death Barriers", "barrier" );
-		rows[ rows.size ] = an_row( "mv", "Easy Elevators", "ele" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
 	else if ( page == "bot" )
@@ -2719,8 +2637,6 @@ an_do_command( cmd, arg )
 				an_friendly_cycle();
 			else if ( arg == "lunge" )
 				an_lunge_cycle();
-			else if ( arg == "ele" )
-				an_elevators_toggle();
 			else
 				an_movement_toggle( arg );
 			break;
@@ -2926,8 +2842,6 @@ an_movement_text( key )
 		return an_friendly_text();
 	if ( key == "lunge" )
 		return an_lunge_text();
-	if ( key == "ele" )
-		return an_elevators_text();
 	if ( key == "barrier" )
 	{
 		v = getdvar( "an_mv_barrier" );
@@ -4543,7 +4457,7 @@ an_humans()
 
 an_vote_pick()
 {
-	maps = an_map_list();
+	maps = an_map_list_stock();
 	pool = [];
 	for ( i = 0; i < maps.size; i++ )
 		if ( maps[i] != getdvar( "mapname" ) )
@@ -4608,7 +4522,7 @@ an_vote_result()
 	pick = level.an_vote_choices[ best[ randomInt( best.size ) ] ];
 	if ( pick == "random" )
 	{
-		maps = an_map_list();
+		maps = an_map_list_stock();
 		pick = maps[ randomInt( maps.size ) ];
 		for ( i = 0; i < 10 && pick == getdvar( "mapname" ); i++ )
 			pick = maps[ randomInt( maps.size ) ];

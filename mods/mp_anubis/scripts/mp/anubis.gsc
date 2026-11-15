@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "101";
+	return "102";
 }
 
 an_on_connect()
@@ -1452,10 +1452,12 @@ an_edition_bind_rows( rows )
 // (falling out of the world; movement.gsc an_barrier_init marks them with an_origin)
 // still hurt. Sky and out-of-map volumes (Nuketown *111, script_noteworthy
 // "tvguided_safe", dmg 1000 every frame = constant hurt flash, Ankh 2026-10-23) are
-// ignored. Stock maps: unchanged.
+// ignored. Stock maps: only the sky barrier (marked an_sky by an_barrier_init) is
+// ignored, so a player can elevate up to and past it; hazards and the fall
+// triggers still kill.
 an_edition_skip_damage( eInflictor, eAttacker, mod )
 {
-	if ( mod != "MOD_TRIGGER_HURT" || !an_nb_map() )
+	if ( mod != "MOD_TRIGGER_HURT" )
 		return false;
 	t = eInflictor;
 	if ( !isDefined( t ) || !isDefined( t.classname ) || t.classname != "trigger_hurt" )
@@ -1463,6 +1465,8 @@ an_edition_skip_damage( eInflictor, eAttacker, mod )
 	if ( !isDefined( t ) || !isDefined( t.classname ) || t.classname != "trigger_hurt" )
 		return false;
 	if ( isDefined( t.an_origin ) )
+		return false;
+	if ( !an_nb_map() && !isDefined( t.an_sky ) )
 		return false;
 	if ( !isDefined( self.an_nb_sky_logged ) )
 	{
@@ -2957,15 +2961,26 @@ an_barrier_init()
 	if ( !isDefined( level.mapCenter ) )
 		return;
 	ents = getEntArray( "trigger_hurt", "classname" );
+	sky = 0;
 	for ( i = 0; i < ents.size; i++ )
 	{
+		// The sky / out-of-map kill volume: one per stock map, tagged "tvguided_safe"
+		// ("tv_guided_safe" on Silo and Zoo) or, untagged (Grid, Hotel, WMD), far
+		// above the map (5392+; map hazards sit at 250 or lower).
+		nw = ents[i].script_noteworthy;
+		if ( ( isDefined( nw ) && ( nw == "tvguided_safe" || nw == "tv_guided_safe" ) ) || ents[i].origin[2] > level.mapCenter[2] + 1000 )
+		{
+			ents[i].an_sky = true;
+			sky++;
+			an_log( "sky barrier off: trigger at " + ents[i].origin );
+		}
 		if ( ents[i].origin[2] <= level.mapCenter[2] )
 		{
 			ents[i].an_origin = ents[i].origin;
 			level.an_barriers[ level.an_barriers.size ] = ents[i];
 		}
 	}
-	an_log( "barriers found " + level.an_barriers.size + " of " + ents.size + " death triggers" );
+	an_log( "barriers found " + level.an_barriers.size + " of " + ents.size + " death triggers, sky barriers off " + sky );
 	an_barrier_apply();
 }
 

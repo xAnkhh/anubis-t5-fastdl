@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "99";
+	return "101";
 }
 
 an_on_connect()
@@ -1369,7 +1369,26 @@ an_edition_init()
 		setdvar( "bg_bouncesAllAngles", "2" );
 	else
 		setdvar( "bg_bouncesAllAngles", "0" );
+	level.an_ele_hold = true;
 	an_elevators_apply();
+	level thread an_elevators_round_hold();
+}
+
+// Easy elevators stay off from the start of every round until 10 seconds after
+// the prematch countdown, so a player who spawns touching geometry or another
+// player is not lifted by accident. Only bg_elevators changes (server side); the
+// collision mode stays as it is, so nothing differs for the players' games.
+an_elevators_round_hold()
+{
+	while ( !isDefined( level.inPrematchPeriod ) )
+		wait 0.05;
+	while ( level.inPrematchPeriod )
+		wait 0.05;
+	wait 10;
+	level.an_ele_hold = false;
+	if ( getdvar( "an_ele" ) == "1" )
+		setdvar( "bg_elevators", "2" );
+	an_log( "elevators round hold over: bg_elevators=[" + getdvar( "bg_elevators" ) + "]" );
 }
 
 an_elevators_apply()
@@ -1377,7 +1396,10 @@ an_elevators_apply()
 	if ( getdvar( "an_ele" ) == "1" )
 	{
 		setdvar( "phys_player_collision_mode", "0" );
-		setdvar( "bg_elevators", "2" );
+		if ( isDefined( level.an_ele_hold ) && level.an_ele_hold )
+			setdvar( "bg_elevators", "0" );
+		else
+			setdvar( "bg_elevators", "2" );
 	}
 	else
 	{
@@ -2737,6 +2759,13 @@ an_movement_init()
 	setdvar( "player_sprintUnlimited", "1" );
 	setdvar( "bg_fallDamageMinHeight", "9998" );
 	setdvar( "bg_fallDamageMaxHeight", "9999" );
+	// No upward speed cap: while a player isn't knife-charging, every pmove frame runs
+	// PM_CheckMeleeCharge -> PM_MeleeChargeClear, which cuts velocity z to
+	// player_bayonetLaunchZCap (300) while player_bayonetLaunchProof is on (KisakBlack
+	// bg_pmove.cpp:1525, 2085). It held bounces down on T4 (wawmod build 20); the player's
+	// game runs the same code (an_speed_watch sets its copy).
+	setdvar( "player_bayonetLaunchProof", "0" );
+	an_log( "z cap: player_bayonetLaunchProof=[" + getdvar( "player_bayonetLaunchProof" ) + "]" );
 	// Wallbang everything comes from the server plugin (bg_surfacePenetration);
 	// the range is the dvar's maximum (registered max 65536 in t5mp.exe).
 	setdvar( "bulletrange", "65536" );
@@ -3028,6 +3057,7 @@ an_speed_watch()
 	// No jump fatigue on the player's own game too: the server sets jump_slowdownEnable 0,
 	// but the game predicts landings with its own copy (SUSPECTED it keeps 1).
 	self setClientDvar( "jump_slowdownEnable", "0" );
+	self setClientDvar( "player_bayonetLaunchProof", "0" );
 	self an_speed_apply();
 	for ( ;; )
 	{

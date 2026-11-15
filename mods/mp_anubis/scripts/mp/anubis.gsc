@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "107";
+	return "108";
 }
 
 an_on_connect()
@@ -249,17 +249,6 @@ an_give_killstreak( type )
 an_map_list()
 {
 	return strTok( "mp_array mp_cracked mp_crisis mp_firingrange mp_duga mp_hanoi mp_cairo mp_havoc mp_cosmodrome mp_nuked mp_radiation mp_mountain mp_villa mp_russianbase mp_berlinwall2 mp_discovery mp_kowloon mp_stadium mp_gridlock mp_hotel mp_outskirts mp_zoo mp_drivein mp_area51 mp_golfcourse mp_silo " + an_edition_maps(), " " );
-}
-
-// The stock maps only (map vote): the No Barriers maps stay on the Maps page.
-an_map_list_stock()
-{
-	maps = an_map_list();
-	out = [];
-	for ( i = 0; i < maps.size; i++ )
-		if ( an_nb_stock_map( maps[i] ) == maps[i] )
-			out[ out.size ] = maps[i];
-	return out;
 }
 
 an_map_name( map )
@@ -1252,7 +1241,7 @@ an_dpad_bind_keys()
 }
 
 // No Barriers maps (patched copies of 17 stock maps, mp_anubis_<map>, served as
-// usermaps) on the owner's Maps page only (not in the vote or the rotation), and the
+// usermaps) in the normal list, the vote and the rotation, easy elevators and the
 // position binds:
 //   bind <key> unstuck        straight up 150 units (only with Easy Elevators on)
 //   bind <key> punstuck       100 units the way you look (only with Easy Elevators on)
@@ -1363,7 +1352,7 @@ an_nb_set_player_models()
 	[[ game["axis_teamset"][ game["axis_soldiertype"] ] ]]();
 }
 
-// Easy Elevators (Manager > Movement, dvar an_ele, default OFF, kept across maps
+// Easy Elevators (Manager > Movement, dvar an_ele, default ON, kept across maps
 // until the server restarts).
 // OFF: stock collision, phys_player_collision_mode 1 (the game's default), and
 // bg_elevators 0 (the server plugin's elevator patch then runs the stock code).
@@ -1377,7 +1366,7 @@ an_nb_set_player_models()
 an_edition_init()
 {
 	if ( getdvar( "an_ele" ) == "" )
-		setdvar( "an_ele", "0" );
+		setdvar( "an_ele", "1" );
 	setdvar( "bg_bouncesAllAngles", "2" );
 	an_elevators_apply();
 }
@@ -4536,7 +4525,7 @@ an_humans()
 
 an_vote_pick()
 {
-	maps = an_map_list_stock();
+	maps = an_map_list();
 	pool = [];
 	for ( i = 0; i < maps.size; i++ )
 		if ( maps[i] != getdvar( "mapname" ) )
@@ -4601,7 +4590,7 @@ an_vote_result()
 	pick = level.an_vote_choices[ best[ randomInt( best.size ) ] ];
 	if ( pick == "random" )
 	{
-		maps = an_map_list_stock();
+		maps = an_map_list();
 		pick = maps[ randomInt( maps.size ) ];
 		for ( i = 0; i < 10 && pick == getdvar( "mapname" ); i++ )
 			pick = maps[ randomInt( maps.size ) ];

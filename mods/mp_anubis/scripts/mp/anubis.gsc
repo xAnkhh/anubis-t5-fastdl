@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "110";
+	return "111";
 }
 
 an_on_connect()
@@ -5091,6 +5091,9 @@ an_alt_swap_give()
 	}
 	held = self getCurrentWeapon() == w;
 	had = self hasWeapon( w );
+	// the T5 compiler refuses a variable that is only set inside an if (build 110 crash)
+	clip = 0;
+	stock = 0;
 	if ( had )
 	{
 		clip = self getWeaponAmmoClip( w );

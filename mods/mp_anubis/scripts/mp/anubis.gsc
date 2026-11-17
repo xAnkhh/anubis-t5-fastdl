@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "109";
+	return "110";
 }
 
 an_on_connect()
@@ -2231,8 +2231,10 @@ an_page_title( page )
 	t = strTok( page, ":" );
 	if ( t[0] == "dg" )
 		return an_upper( an_drop_group_name( t[1] ) );
-	if ( t[0] == "dw" )
+	if ( t[0] == "dw" || t[0] == "aw" )
 		return an_upper( t[1] );
+	if ( t[0] == "ag" )
+		return an_upper( an_drop_group_name( t[1] ) );
 	switch ( page )
 	{
 		case "main": return "MAIN";
@@ -2240,6 +2242,7 @@ an_page_title( page )
 		case "perks": return "PERKS";
 		case "weapon": return "WEAPON";
 		case "drop": return "CANSWAP DROP";
+		case "as": return "ALT SWAP";
 		case "movement": return "MOVEMENT";
 		case "bindables": return "BINDABLES";
 		case "owner": return "OWNER";
@@ -2287,6 +2290,8 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "wset", "Force Cockbacks", "fc" );
 		rows[ rows.size ] = an_row( "wset", "One Bullet", "ob" );
 		rows[ rows.size ] = an_row( "sc", "Secondary Camo = Primary", "sc" );
+		rows[ rows.size ] = an_row( "aspage", "Alt Swap Weapon", "as" );
+		rows[ rows.size ] = an_row( "asc", "Alt Swap Camo", "asc" );
 		rows[ rows.size ] = an_row( "rf", "Rapid Fire", "rf" );
 		rows[ rows.size ] = an_row( "page", "Canswap Drop", "drop" );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
@@ -2296,6 +2301,29 @@ an_page_rows( page )
 		groups = an_drop_groups();
 		for ( i = 0; i < groups.size; i++ )
 			rows[ rows.size ] = an_row( "page", an_drop_group_name( groups[i] ), "dg:" + groups[i] );
+		rows[ rows.size ] = an_row( "back", "Back", "" );
+	}
+	else if ( page == "as" )
+	{
+		rows[ rows.size ] = an_row( "as", "Off", "off" );
+		groups = an_drop_groups();
+		for ( i = 0; i < groups.size; i++ )
+			rows[ rows.size ] = an_row( "page", an_drop_group_name( groups[i] ), "ag:" + groups[i] );
+		rows[ rows.size ] = an_row( "back", "Back", "" );
+	}
+	else if ( t[0] == "ag" )
+	{
+		guns = an_drop_guns( t[1] );
+		for ( i = 0; i < guns.size; i++ )
+			rows[ rows.size ] = an_row( "page", an_upper( guns[i] ), "aw:" + guns[i] );
+		rows[ rows.size ] = an_row( "back", "Back", "" );
+	}
+	else if ( t[0] == "aw" )
+	{
+		rows[ rows.size ] = an_row( "as", an_attachment_name( "none" ), t[1] + ":none" );
+		atts = an_drop_attachments( t[1] );
+		for ( i = 0; i < atts.size; i++ )
+			rows[ rows.size ] = an_row( "as", an_attachment_name( atts[i] ), t[1] + ":" + atts[i] );
 		rows[ rows.size ] = an_row( "back", "Back", "" );
 	}
 	else if ( t[0] == "dg" )
@@ -2420,6 +2448,22 @@ an_row_value( r )
 	switch ( r.kind )
 	{
 		case "page": return ">";
+		case "aspage": return self an_alt_swap_text();
+		case "asc":
+			if ( self.pers["an_asc"] == "1" )
+				return "ON";
+			return "OFF";
+		case "as":
+			if ( r.arg == "off" )
+			{
+				if ( self.pers["an_as"] == "" )
+					return "EQUIPPED";
+				return "";
+			}
+			ta = strTok( r.arg, ":" );
+			if ( self.pers["an_as"] == an_drop_weapon_name( ta[0], ta[1] ) )
+				return "EQUIPPED";
+			return "";
 		case "back": return "";
 		case "map":
 			if ( r.arg == getdvar( "mapname" ) )
@@ -2546,7 +2590,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "kc" || r.kind == "sc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" || r.kind == "dpadbind" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "kc" || r.kind == "sc" || r.kind == "aspage" || r.kind == "asc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" || r.kind == "dpadbind" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -2608,6 +2652,7 @@ an_menu_select()
 	switch ( r.kind )
 	{
 		case "page":
+		case "aspage":
 			self.an_stack[ self.an_stack.size ] = self.an_page;
 			self.an_page = r.arg;
 			self.an_sel = 0;
@@ -2633,6 +2678,8 @@ an_menu_select()
 		case "dpadbind":
 		case "sb":
 		case "drop":
+		case "as":
+		case "asc":
 		case "mv":
 		case "loop":
 		case "mgr":
@@ -2681,6 +2728,16 @@ an_do_command( cmd, arg )
 		case "ah": self an_almost_hit_toggle(); break;
 		case "kc": self an_killcard_toggle(); break;
 		case "sc": self an_secondary_camo_toggle(); break;
+		case "asc": self an_alt_swap_camo_toggle(); break;
+		case "as":
+			if ( arg == "off" )
+				self an_alt_swap_set( "" );
+			else
+			{
+				ta = strTok( arg, ":" );
+				self an_alt_swap_set( an_drop_weapon_name( ta[0], ta[1] ) );
+			}
+			break;
 		case "perk": self an_perk_toggle( arg ); break;
 		case "st": self an_semtex_toggle(); break;
 		case "rf": self an_rapid_toggle(); break;
@@ -3982,7 +4039,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	keys = strTok( "is ac ob nc fc afh afr ah kc sb ps pc pa pl st sc rf stb", " " );
+	keys = strTok( "is ac ob nc fc afh afr ah kc sb ps pc pa pl st sc rf stb as asc", " " );
 	extra = an_dpad_bind_keys();
 	for ( i = 0; i < extra.size; i++ )
 		keys[ keys.size ] = extra[i];
@@ -4043,6 +4100,7 @@ an_load_personal( quiet )
 		self.an_sc_forced = true;
 		self an_secondary_camo_apply( self.pers["an_sc"] == "1" );
 		self.an_sc_forced = undefined;
+		self an_alt_swap_give();
 	}
 	self iPrintLn( "Saved settings loaded (" + n + ")" );
 	an_log( "load " + self.name + " " + n + " values" );
@@ -4052,11 +4110,18 @@ an_valid_setting( key, v )
 {
 	switch ( key )
 	{
+		case "as":
+			// "" or a weapon name: letters, digits and underscores
+			for ( i = 0; i < v.size; i++ )
+				if ( !isSubStr( "abcdefghijklmnopqrstuvwxyz0123456789_", v[i] ) )
+					return false;
+			return true;
 		case "afh": return v == "off" || v == "stance" || v == "instant";
 		case "afr": return v == "off" || v == "empty" || v == "normal";
 		case "ah":
 		case "kc":
 		case "sc":
+		case "asc":
 		case "ps":
 		case "pc":
 		case "pa":
@@ -4673,6 +4738,11 @@ an_weapons_defaults()
 	// Secondary Camo = Primary (sesh "alt swap camos" idea), off by default
 	if ( !isDefined( self.pers["an_sc"] ) )
 		self.pers["an_sc"] = "0";
+	// Alt swap weapon ("" = off) and Alt Swap Camo, off by default
+	if ( !isDefined( self.pers["an_as"] ) )
+		self.pers["an_as"] = "";
+	if ( !isDefined( self.pers["an_asc"] ) )
+		self.pers["an_asc"] = "0";
 	self an_perks_defaults();
 	self an_semtex_connect();
 }
@@ -4840,6 +4910,7 @@ an_record_weapon_options()
 	self endon( "disconnect" );
 	self.an_wopts = [];
 	wait 0.05;
+	self an_alt_swap_give();
 	cc = self an_held_class_guns();
 	if ( !isDefined( cc ) )
 		return;
@@ -4984,6 +5055,106 @@ an_secondary_camo_toggle()
 		self an_secondary_camo_apply( self.pers["an_sc"] == "1" );
 		self.an_sc_forced = undefined;
 	}
+}
+
+// ---------------------------------------------------------------- alt swap
+
+// Alt swap (Ankh 2026-11-17, sesh's idea): a third primary picked on the Alt Swap page
+// (pers an_as = weapon name, "" = off), given again on every spawn and class change
+// (an_record_weapon_options runs after both). The player's own weapon switch cycles
+// through every held primary (KisakBlack cg_weapons.cpp:4153 CycleWeapPrimary walks all
+// 15 held slots), so it joins the normal swap; the two-gun limit is only the pickup
+// check (bg_weapons.cpp:5181). Alt Swap Camo (an_asc) gives it the class primary's camo
+// (camo = weapon option bits 0-5, as Secondary Camo = Primary).
+an_alt_swap_give()
+{
+	if ( !isAlive( self ) )
+		return;
+	w = self.pers["an_as"];
+	old = self.an_as_given;
+	self.an_as_given = undefined;
+	if ( isDefined( old ) && old != w && self hasWeapon( old ) && !self an_is_class_gun( old ) )
+		self takeWeapon( old );
+	if ( w == "" )
+		return;
+	if ( self an_is_class_gun( w ) )
+	{
+		an_log( "alt swap " + self.name + " " + w + " is a class gun already" );
+		return;
+	}
+	opts = 0;
+	if ( self.pers["an_asc"] == "1" )
+	{
+		cc = self an_held_class_guns();
+		if ( isDefined( cc ) && isDefined( cc["primary_weapon_options"] ) )
+			opts = int( cc["primary_weapon_options"] ) % 64;
+	}
+	held = self getCurrentWeapon() == w;
+	had = self hasWeapon( w );
+	if ( had )
+	{
+		clip = self getWeaponAmmoClip( w );
+		stock = self getWeaponAmmoStock( w );
+		self takeWeapon( w );
+	}
+	self giveWeapon( w, 0, opts );
+	if ( !self hasWeapon( w ) )
+	{
+		self iPrintLn( "The game refused " + w );
+		an_log( "alt swap refused " + w + " for " + self.name );
+		return;
+	}
+	if ( had )
+	{
+		self setWeaponAmmoClip( w, clip );
+		self setWeaponAmmoStock( w, stock );
+	}
+	else
+		self giveMaxAmmo( w );
+	if ( !isDefined( self.an_wopts ) )
+		self.an_wopts = [];
+	self.an_wopts[ w ] = opts;
+	self.an_as_given = w;
+	if ( held )
+		self switchToWeapon( w );
+	an_log( "alt swap " + self.name + " " + w + " camo " + opts );
+}
+
+an_is_class_gun( weapon )
+{
+	cc = self an_held_class_guns();
+	if ( !isDefined( cc ) )
+		return false;
+	return ( isDefined( cc["primary"] ) && cc["primary"] == weapon ) || ( isDefined( cc["secondary"] ) && cc["secondary"] == weapon );
+}
+
+// Menu pick: "" = off.
+an_alt_swap_set( weapon )
+{
+	self.pers["an_as"] = weapon;
+	self an_alt_swap_give();
+	if ( weapon != "" && isAlive( self ) && !self hasWeapon( weapon ) )
+		self.pers["an_as"] = "";
+	an_log( "setting as = " + self.pers["an_as"] + " by " + self.name );
+}
+
+an_alt_swap_camo_toggle()
+{
+	if ( self.pers["an_asc"] == "1" )
+		self.pers["an_asc"] = "0";
+	else
+		self.pers["an_asc"] = "1";
+	self an_alt_swap_give();
+}
+
+an_alt_swap_text()
+{
+	w = self.pers["an_as"];
+	if ( w == "" )
+		return "OFF";
+	if ( w.size > 3 && getSubStr( w, w.size - 3, w.size ) == "_mp" )
+		w = getSubStr( w, 0, w.size - 3 );
+	return an_upper( w );
 }
 
 an_weapon_options( weapon )

@@ -44,7 +44,7 @@ init()
 
 an_build()
 {
-	return "111";
+	return "112";
 }
 
 an_on_connect()
@@ -1929,6 +1929,7 @@ an_lunge_init()
 		setdvar( "an_lunge_v", "2" );
 	}
 	an_lunge_apply_server();
+	level thread an_lunge_mask_loop();
 }
 
 an_lunge_apply_server()
@@ -1948,7 +1949,7 @@ an_lunge_apply_player()
 	if ( mode == "far" )
 		range = "255";
 	debug = "0";
-	if ( mode == "always" )
+	if ( mode == "always" || self an_lunge_always_own() )
 		debug = "1";
 	self setClientDvar( "aim_automelee_range", range );
 	self setClientDvar( "player_bayonetLaunchDebugging", debug );
@@ -1975,6 +1976,75 @@ an_lunge_text()
 	if ( v == "" )
 		return "OFF";
 	return an_upper( v );
+}
+
+// Per-player Knife Lunge Always (Utilities, pers an_kla, saved; Ankh 2026-11-17). The
+// server's own movement code must agree with the player's game, and
+// player_bayonetLaunchDebugging is one server-wide dvar, so the elevators plugin
+// (t5-1.2.0) reads a bit per client slot instead: an_lungeAlways. Without the plugin
+// the row says so and changes nothing (one side only = rubber-banding).
+an_lunge_plugin()
+{
+	return getdvar( "an_lungeAlwaysPatched" ) == "1";
+}
+
+an_lunge_always_own()
+{
+	return isDefined( self.pers["an_kla"] ) && self.pers["an_kla"] == "1" && an_lunge_plugin();
+}
+
+an_lunge_always_toggle()
+{
+	if ( !an_lunge_plugin() )
+	{
+		self iPrintLn( "Knife Lunge Always needs the Anubis server plugin" );
+		return;
+	}
+	if ( self.pers["an_kla"] == "1" )
+		self.pers["an_kla"] = "0";
+	else
+		self.pers["an_kla"] = "1";
+	self an_lunge_apply_player();
+	an_lunge_mask_update();
+	an_log( "knife lunge always " + self.pers["an_kla"] + " for " + self.name );
+}
+
+an_lunge_always_text()
+{
+	if ( isDefined( self.pers["an_kla"] ) && self.pers["an_kla"] == "1" )
+		return "ON";
+	return "OFF";
+}
+
+// Bit per slot (sum of powers of two: one bit per player, so no carries).
+an_lunge_mask_update()
+{
+	if ( !an_lunge_plugin() )
+		return;
+	mask = 0;
+	for ( i = 0; i < level.players.size; i++ )
+	{
+		p = level.players[i];
+		if ( !an_is_human( p ) || !p an_lunge_always_own() )
+			continue;
+		bit = 1;
+		for ( k = 0; k < p getEntityNumber(); k++ )
+			bit = bit * 2;
+		mask = mask + bit;
+	}
+	if ( getdvar( "an_lungeAlways" ) != "" + mask )
+		setdvar( "an_lungeAlways", mask );
+}
+
+// Players leave and slots are reused: the mask is rebuilt twice a second.
+an_lunge_mask_loop()
+{
+	level endon( "game_ended" );
+	for ( ;; )
+	{
+		an_lunge_mask_update();
+		wait 0.5;
+	}
 }
 
 // Menu: script-drawn hud elements (T5 has no LUI; see NOTES.md section 5).
@@ -2349,6 +2419,7 @@ an_page_rows( page )
 		rows[ rows.size ] = an_row( "afr", "Afterhit Reload", "afr" );
 		rows[ rows.size ] = an_row( "stb", "Dive Stall Bind", "stb" );
 		rows[ rows.size ] = an_row( "ah", "Almost Hit Message", "ah" );
+		rows[ rows.size ] = an_row( "kla", "Knife Lunge Always", "kla" );
 		rows[ rows.size ] = an_row( "kc", "Own Killcam Card", "kc" );
 		rows[ rows.size ] = an_row( "cmd", "Save Settings", "save" );
 		rows[ rows.size ] = an_row( "cmd", "Load Settings", "load" );
@@ -2449,6 +2520,7 @@ an_row_value( r )
 	{
 		case "page": return ">";
 		case "aspage": return self an_alt_swap_text();
+		case "kla": return self an_lunge_always_text();
 		case "asc":
 			if ( self.pers["an_asc"] == "1" )
 				return "ON";
@@ -2590,7 +2662,7 @@ an_menu_render()
 		v = an_row_value( r );
 		an_set_text( self.an_value[i], v );
 		self.an_value[i].alpha = 1;
-		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "kc" || r.kind == "sc" || r.kind == "aspage" || r.kind == "asc" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" || r.kind == "dpadbind" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
+		if ( r.kind == "cycle" || v == "CURRENT" || v == "EQUIPPED" || ( ( r.kind == "wset" || r.kind == "afh" || r.kind == "afr" || r.kind == "ah" || r.kind == "kc" || r.kind == "sc" || r.kind == "aspage" || r.kind == "asc" || r.kind == "kla" || r.kind == "perk" || r.kind == "st" || r.kind == "rf" || r.kind == "mv" || r.kind == "loop" || r.kind == "mgr" || r.kind == "sb" || r.kind == "stb" || r.kind == "dpadbind" ) && v != "OFF" ) || ( r.kind == "vote" && self an_my_vote() == r.arg ) )
 			self.an_value[i].color = level.an_accent;
 		else if ( sel )
 			self.an_value[i].color = ( 0.93, 0.93, 0.93 );
@@ -2680,6 +2752,7 @@ an_menu_select()
 		case "drop":
 		case "as":
 		case "asc":
+		case "kla":
 		case "mv":
 		case "loop":
 		case "mgr":
@@ -2729,6 +2802,7 @@ an_do_command( cmd, arg )
 		case "kc": self an_killcard_toggle(); break;
 		case "sc": self an_secondary_camo_toggle(); break;
 		case "asc": self an_alt_swap_camo_toggle(); break;
+		case "kla": self an_lunge_always_toggle(); break;
 		case "as":
 			if ( arg == "off" )
 				self an_alt_swap_set( "" );
@@ -4039,7 +4113,7 @@ an_team_on_connect()
 
 an_personal_keys()
 {
-	keys = strTok( "is ac ob nc fc afh afr ah kc sb ps pc pa pl st sc rf stb as asc", " " );
+	keys = strTok( "is ac ob nc fc afh afr ah kc sb ps pc pa pl st sc rf stb as asc kla", " " );
 	extra = an_dpad_bind_keys();
 	for ( i = 0; i < extra.size; i++ )
 		keys[ keys.size ] = extra[i];
@@ -4102,6 +4176,7 @@ an_load_personal( quiet )
 		self.an_sc_forced = undefined;
 		self an_alt_swap_give();
 	}
+	self an_lunge_apply_player();
 	self iPrintLn( "Saved settings loaded (" + n + ")" );
 	an_log( "load " + self.name + " " + n + " values" );
 }
@@ -4122,6 +4197,7 @@ an_valid_setting( key, v )
 		case "kc":
 		case "sc":
 		case "asc":
+		case "kla":
 		case "ps":
 		case "pc":
 		case "pa":
@@ -4743,6 +4819,8 @@ an_weapons_defaults()
 		self.pers["an_as"] = "";
 	if ( !isDefined( self.pers["an_asc"] ) )
 		self.pers["an_asc"] = "0";
+	if ( !isDefined( self.pers["an_kla"] ) )
+		self.pers["an_kla"] = "0";
 	self an_perks_defaults();
 	self an_semtex_connect();
 }
